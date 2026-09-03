@@ -1,0 +1,8 @@
+# Normalise to LF in the repository. Development is on Windows; Metro, EAS and
+# any CI runner are Linux, and a shell script or Gradle wrapper checked out with
+# CRLF fails there with "bad interpreter".
+* text=auto eol=lf
+
+*.sh       text eol=lf
+*.yml      text eol=lf
+gradlew    text eol=lf
