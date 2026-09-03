@@ -1,0 +1,208 @@
+import * as Crypto from 'expo-crypto';
+import { ReadingPayload } from './api';
+import { FIELD_TABLES, FieldTable, getDb } from './db';
+
+/**
+ * The record queue (doc 07 §1).
+ *
+ * Every write an operator makes goes in here first, with a client_id and a
+ * sync_status. That pair is the entire offline guarantee: the id makes a retry
+ * a no-op on the server, and the status means nothing leaves the phone until
+ * the server has said it arrived.
+ */
+
+export type QueuedReading = {
+  clientId: string;
+  tankId: number;
+  dcsLevelMm: number | null;
+  tapeLengthMm: number;
+  bandulSulfurMm: number;
+  levelMm: number;
+  deviationMm: number | null;
+  attempts: number;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  note: string;
+  photoLocalUri?: string;
+  readingAt: string;
+};
+
+/**
+ * Saves a reading locally. Returns its client_id.
+ *
+ * The id is minted here, once, and never changes afterwards — regenerating it
+ * on a retry would defeat the server's idempotency and produce exactly the
+ * duplicate rows the protocol forbids (doc 07 §3).
+ */
+export async function enqueueReading(reading: Omit<QueuedReading, 'clientId'>): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+
+  await db.runAsync(
+    `INSERT INTO tank_readings
+       (client_id, tank_id, dcs_level_mm, tape_length_mm, bandul_sulfur_mm, level_mm, deviation_mm,
+        attempts, operator_name, shift_group, shift_time, note, photo_local_uri,
+        reading_at, sync_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_SYNC', ?)`,
+    clientId, reading.tankId, reading.dcsLevelMm, reading.tapeLengthMm, reading.bandulSulfurMm,
+    reading.levelMm, reading.deviationMm, reading.attempts, reading.operatorName,
+    reading.shiftGroup, reading.shiftTime, reading.note, reading.photoLocalUri ?? '',
+    reading.readingAt, new Date().toISOString(),
+  );
+
+  return clientId;
+}
+
+/**
+ * Records waiting to go, oldest first.
+ *
+ * SYNC_ERROR rows are included: the server rejected them once, but the operator
+ * may have corrected the data since, and a record that is never retried is a
+ * record silently abandoned.
+ */
+export async function pendingReadings(): Promise<ReadingPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<Record<string, never>>(
+    `SELECT * FROM tank_readings WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+  );
+
+  return rows.map((r: any) => ({
+    clientId: r.client_id,
+    tankId: r.tank_id,
+    dcsLevelMm: r.dcs_level_mm,
+    tapeLengthMm: r.tape_length_mm,
+    bandulSulfurMm: r.bandul_sulfur_mm,
+    attempts: r.attempts,
+    operatorName: r.operator_name,
+    shiftGroup: r.shift_group,
+    shiftTime: r.shift_time,
+    note: r.note ?? '',
+    ...(r.photo_path ? { photoPath: r.photo_path } : {}),
+    readingAt: r.reading_at,
+  }));
+}
+
+/** Which table a client_id belongs to, so acks can be applied generically. */
+async function tableForClientId(clientId: string): Promise<FieldTable | null> {
+  const db = await getDb();
+  for (const table of FIELD_TABLES) {
+    const row = await db.getFirstAsync<{ client_id: string }>(
+      `SELECT client_id FROM ${table} WHERE client_id = ?`, clientId,
+    );
+    if (row) return table;
+  }
+  return null;
+}
+
+/**
+ * Marks a record accepted.
+ *
+ * The server's recomputed level replaces the local preview when it differs
+ * (doc 07 §2.4a). The phone's number was only ever for immediate feedback; the
+ * stored value must match what the server holds, or the two disagree forever.
+ */
+export async function markSynced(
+  clientId: string,
+  serverId: number | null,
+  serverValues?: { levelMm?: number; deviationMm?: number | null },
+): Promise<void> {
+  const db = await getDb();
+  const table = await tableForClientId(clientId);
+  if (!table) return;
+
+  await db.runAsync(
+    `UPDATE ${table} SET sync_status = 'SYNCED', server_id = ?, error_code = NULL, error_message = NULL
+      WHERE client_id = ?`,
+    serverId, clientId,
+  );
+
+  if (table === 'tank_readings' && serverValues?.levelMm !== undefined) {
+    await db.runAsync(
+      'UPDATE tank_readings SET level_mm = ?, deviation_mm = ? WHERE client_id = ?',
+      serverValues.levelMm, serverValues.deviationMm ?? null, clientId,
+    );
+  }
+}
+
+/**
+ * Marks a record rejected on domain grounds.
+ *
+ * It stays on the phone and keeps counting as unsent. The operator is shown the
+ * server's reason so they can fix it — a rejected record that quietly vanished
+ * would be indistinguishable from one that synced.
+ */
+export async function markError(clientId: string, code: string, message: string): Promise<void> {
+  const db = await getDb();
+  const table = await tableForClientId(clientId);
+  if (!table) return;
+
+  await db.runAsync(
+    `UPDATE ${table} SET sync_status = 'SYNC_ERROR', error_code = ?, error_message = ? WHERE client_id = ?`,
+    code, message, clientId,
+  );
+}
+
+export type UnsentRecord = {
+  clientId: string;
+  table: FieldTable;
+  label: string;
+  status: string;
+  errorMessage: string | null;
+  createdAt: string;
+};
+
+/** What the Sync screen lists — everything not yet on the server. */
+export async function unsentRecords(): Promise<UnsentRecord[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT r.client_id, r.sync_status, r.error_message, r.created_at, r.level_mm, t.code AS tank_code
+       FROM tank_readings r
+       LEFT JOIN tanks t ON t.id = r.tank_id
+      WHERE r.sync_status != 'SYNCED'
+      ORDER BY r.created_at`,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    table: 'tank_readings' as FieldTable,
+    // Full tank code, never abbreviated (doc 02 §1.1).
+    label: `${r.tank_code ?? 'Tangki'} — ${Number(r.level_mm).toLocaleString('id-ID')} mm`,
+    status: r.sync_status,
+    errorMessage: r.error_message,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * Rolling 7-day retention (doc 07 §5).
+ *
+ * Two rules are absolute and both exist to stop the phone deleting work:
+ *   PENDING_SYNC is never purged, at any age. A handset offline for ten days
+ *   still holds everything it recorded.
+ *   Cleaning sessions still IN_PROGRESS are never purged either, even once
+ *   synced — they are waiting for an after-photo, and losing them locally would
+ *   strand work the operator intends to finish.
+ *
+ * @returns how many rows were removed
+ */
+export async function runRetention(): Promise<number> {
+  const db = await getDb();
+  let removed = 0;
+
+  for (const table of FIELD_TABLES) {
+    const keepUnfinishedCleaning = table === 'cleaning_sessions'
+      ? " AND status != 'IN_PROGRESS'"
+      : '';
+
+    const result = await db.runAsync(
+      `DELETE FROM ${table}
+        WHERE sync_status = 'SYNCED'
+          AND created_at < datetime('now', '-7 days')
+          ${keepUnfinishedCleaning}`,
+    );
+    removed += result.changes;
+  }
+
+  return removed;
+}

@@ -1,6 +1,9 @@
 import { Link, Tabs } from 'expo-router';
+import * as Network from 'expo-network';
+import { useEffect } from 'react';
 import { ColorValue, Pressable, Text } from 'react-native';
 import { TOUCH_TARGET, colors, space, type } from '@/constants/theme';
+import { runSync } from '@/lib/sync';
 
 /**
  * Bottom tabs.
@@ -14,6 +17,18 @@ function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
 }
 
 export default function TabsLayout() {
+  // Auto-sync on open and whenever the connection returns (doc 03 §3.6).
+  // Deliberately fire-and-forget: sync must never block the operator from
+  // recording, and runSync already collapses overlapping calls.
+  useEffect(() => {
+    runSync().catch(() => {});
+
+    const subscription = Network.addNetworkStateListener(({ isConnected }) => {
+      if (isConnected) runSync().catch(() => {});
+    });
+    return () => subscription.remove();
+  }, []);
+
   return (
     <Tabs
       screenOptions={{

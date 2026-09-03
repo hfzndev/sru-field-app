@@ -133,6 +133,81 @@ export function revoke(token: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/auth/revoke', { method: 'POST', token });
 }
 
+/* --------------------------------------------------------------- sync/pull */
+
+export type ReadingPayload = {
+  clientId: string;
+  tankId: number;
+  dcsLevelMm: number | null;
+  tapeLengthMm: number;
+  bandulSulfurMm: number;
+  attempts: number;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  note: string;
+  photoPath?: string;
+  readingAt: string;
+};
+
+export type SyncPayload = {
+  readings?: ReadingPayload[];
+  cleaning?: unknown[];
+  activities?: unknown[];
+  taskLogs?: unknown[];
+};
+
+export type SyncAck = {
+  clientId: string;
+  serverId: number;
+  levelMm?: number;
+  deviationMm?: number | null;
+  updated?: boolean;
+};
+
+export type SyncResponse = {
+  acked: SyncAck[];
+  duplicates: { clientId: string; serverId: number | null }[];
+  errors?: { clientId: string; error: { code: string; message: string } }[];
+  serverTime: string;
+};
+
+/**
+ * Pushes queued records (doc 06 §5).
+ *
+ * Safe to call repeatedly by construction: client_id makes a replayed batch
+ * return `duplicates` rather than inserting twice.
+ */
+export function sync(token: string, payload: SyncPayload): Promise<SyncResponse> {
+  return request<SyncResponse>('/api/sync', { method: 'POST', token, body: payload });
+}
+
+export type PullResponse = {
+  dataVersion: number;
+  master: {
+    tanks: (TankDto & { isActive: boolean })[];
+    equipment: (EquipmentDto & { isActive: boolean })[];
+    contractors: (ContractorDto & { isActive: boolean })[];
+    tasks: TaskDto[];
+    crew: { id: number; name: string; sortOrder: number; isActive: boolean }[];
+  };
+  recent: {
+    readings: {
+      clientId: string; tankId: number; levelMm: number; dcsLevelMm: number | null;
+      readingAt: string;
+    }[];
+    activities: unknown[];
+    cleaning: unknown[];
+    taskLogs: unknown[];
+  };
+  serverTime: string;
+};
+
+/** Delta master plus this shift's last 7 days (doc 06 §5). */
+export function pull(token: string, since: number): Promise<PullResponse> {
+  return request<PullResponse>(`/api/pull?since=${encodeURIComponent(since)}`, { token });
+}
+
 export function health(): Promise<{ status: string; database: string }> {
   return request<{ status: string; database: string }>('/api/health', { timeoutMs: 5000 });
 }
