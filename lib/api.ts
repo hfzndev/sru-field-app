@@ -182,6 +182,33 @@ export function sync(token: string, payload: SyncPayload): Promise<SyncResponse>
   return request<SyncResponse>('/api/sync', { method: 'POST', token, body: payload });
 }
 
+/**
+ * A reading from the server's 7-day window.
+ *
+ * Stored locally rather than only read, because three handsets share a shift
+ * (doc 02 §1.3): history assembled from this device alone would show roughly a
+ * third of the work, and a phone swapped in mid-rotation would show none of it
+ * (doc 07 §5).
+ */
+export type RecentReading = {
+  id: number;
+  clientId: string;
+  tankId: number;
+  dcsLevelMm: number | null;
+  tapeLengthMm: number;
+  bandulSulfurMm: number;
+  levelMm: number;
+  deviationMm: number | null;
+  attempts: number;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  photoPath: string;
+  note: string;
+  readingAt: string;
+  receivedAt: string;
+};
+
 export type PullResponse = {
   dataVersion: number;
   master: {
@@ -192,10 +219,7 @@ export type PullResponse = {
     crew: { id: number; name: string; sortOrder: number; isActive: boolean }[];
   };
   recent: {
-    readings: {
-      clientId: string; tankId: number; levelMm: number; dcsLevelMm: number | null;
-      readingAt: string;
-    }[];
+    readings: RecentReading[];
     activities: unknown[];
     cleaning: unknown[];
     taskLogs: unknown[];

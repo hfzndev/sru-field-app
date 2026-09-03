@@ -151,12 +151,13 @@ function summarise(pushed: number, duplicates: number, rejected: number): string
 }
 
 /**
- * Applies a pull: master data replaced, deviation cache refreshed.
+ * Applies a pull: master data upserted, the shift's 7-day window stored, and
+ * the deviation cache rebuilt.
  *
- * Field records from `recent` are not written back. They are already on the
- * server, and re-inserting them would only give the phone rows it cannot act
- * on — the 7-day window is for reading history (doc 07 §5), which task 7 shows
- * from what this device recorded plus what the pull returns for display.
+ * The window is written into tank_readings as SYNCED rows, which is what makes
+ * history correct: three handsets share a shift, so a device that only knew its
+ * own records would show a third of the work, and one swapped in mid-rotation
+ * would show none (doc 07 §5).
  */
 async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise<number> {
   const db = await getDb();
@@ -214,6 +215,29 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
            progress_pct = excluded.progress_pct, due_date = excluded.due_date`,
         task.id, task.equipmentId, task.equipmentTag ?? '', task.equipmentName ?? '',
         task.title, task.description ?? '', task.status, task.progressPct, task.dueDate ?? null,
+      );
+      rows += 1;
+    }
+
+    // ON CONFLICT DO NOTHING, never an upsert: a client_id already here belongs
+    // to a record this device created, which may still be PENDING or carry a
+    // rejection the operator has yet to fix. The server's copy must not
+    // overwrite that local state.
+    for (const r of recent.readings ?? []) {
+      await txn.runAsync(
+        `INSERT INTO tank_readings
+           (client_id, tank_id, dcs_level_mm, tape_length_mm, bandul_sulfur_mm, level_mm, deviation_mm,
+            attempts, operator_name, shift_group, shift_time, note, photo_path,
+            reading_at, sync_status, server_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+         ON CONFLICT(client_id) DO NOTHING`,
+        r.clientId, r.tankId, r.dcsLevelMm, r.tapeLengthMm, r.bandulSulfurMm,
+        r.levelMm, r.deviationMm, r.attempts, r.operatorName, r.shiftGroup,
+        r.shiftTime, r.note ?? '', r.photoPath ?? '', r.readingAt, r.id,
+        // created_at drives retention, so it tracks when the server received
+        // the record — not now, or a pulled record would restart its 7 days on
+        // every device that ever sees it.
+        r.receivedAt ?? r.readingAt,
       );
       rows += 1;
     }
