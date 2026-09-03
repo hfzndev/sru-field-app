@@ -1,11 +1,16 @@
 import Constants from 'expo-constants';
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Card, Loading, Screen } from '@/components/ui';
-import { colors, space, type } from '@/constants/theme';
+import { Alert, Button, Card, Loading, Screen } from '@/components/ui';
+import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
+import { revoke } from '@/lib/api';
+import { API_URL, IS_LOCAL_API } from '@/lib/config';
 import { DbDiagnostics, diagnostics, ensureInstallId, getMeta } from '@/lib/db';
 import { formatDateTime } from '@/lib/format';
+import { Session, endSession, getSession, getToken } from '@/lib/session';
+import { refreshUnsent, useOnline, useUnsent } from '@/lib/status';
+import { isOnline } from '@/lib/sync';
 
 /**
  * About, account, and local diagnostics (doc 03 §5).
@@ -18,34 +23,103 @@ import { formatDateTime } from '@/lib/format';
  * did not send", the useful answer is how many records are queued and why, and
  * nobody in the plant has a laptop and adb to hand.
  */
+type Info = { session: Session | null; lastSync: string | null };
+
 export default function SettingsScreen() {
   const appVersion = Constants.expoConfig?.version ?? 'tidak diketahui';
+  const online = useOnline();
+  const unsent = useUnsent();
+
   const [db, setDb] = useState<DbDiagnostics | null>(null);
   const [installId, setInstallId] = useState('');
   const [firstOpened, setFirstOpened] = useState<string | null>(null);
+  const [info, setInfo] = useState<Info | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [leaving, setLeaving] = useState(false);
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     let ignore = false;
     (async () => {
-      const [stats, id, opened] = await Promise.all([
+      const [stats, id, opened, session, lastSync] = await Promise.all([
         diagnostics(),
         ensureInstallId(),
         getMeta('firstOpenedAt'),
+        getSession(),
+        getMeta('lastSyncAt'),
       ]);
       if (ignore) return;
       setDb(stats);
       setInstallId(id);
       setFirstOpened(opened);
+      setInfo({ session, lastSync });
     })();
     return () => { ignore = true; };
-  }, []);
+  }, []));
+
+  /**
+   * Signs out for real.
+   *
+   * The token is revoked server-side first when there is signal, so a handset
+   * handed to another shift — or lost — stops being able to write immediately
+   * rather than when its 12h expiry runs out (doc 08 §2.2). When that call
+   * cannot be made the local sign-out still happens: refusing to log out
+   * because the plant has no signal would be the worse failure.
+   */
+  async function signOut() {
+    setLeaving(true);
+    try {
+      const token = await getToken();
+      if (token && (await isOnline())) {
+        try {
+          await revoke(token);
+        } catch {
+          // Offline, or the token was already revoked by an admin. Neither is
+          // a reason to keep the operator signed in on this phone.
+        }
+      }
+      await endSession();
+      await refreshUnsent();
+      router.replace('/login');
+    } finally {
+      setLeaving(false);
+    }
+  }
+
+  const session = info?.session ?? null;
+  const shiftTime = session?.shiftTime ? SHIFT_TIME_LABEL[session.shiftTime] ?? session.shiftTime : '';
 
   return (
     <Screen>
       <Card>
         <Row label="Versi aplikasi" value={appVersion} />
-        <Row label="Server" value="belum tersambung" />
-        <Row label="Akun shift" value="—" />
+        <Row label="Server" value={hostOf(API_URL)} />
+        <Row label="Koneksi" value={online ? 'Ada sinyal' : 'Tidak ada sinyal'} />
+        <Row
+          label="Terakhir sync"
+          value={info ? (info.lastSync ? formatDateTime(info.lastSync) : 'belum pernah') : '…'}
+        />
+      </Card>
+
+      {/* A handset pointing at a dev server looks completely normal until a
+          whole shift of records turns out to be on somebody's laptop. */}
+      {IS_LOCAL_API && (
+        <Alert error="Aplikasi ini menunjuk ke server lokal, bukan server lapangan. Jangan dipakai untuk mencatat sungguhan." />
+      )}
+
+      <Text style={styles.section}>Akun shift</Text>
+      <Card>
+        {!info ? <Loading /> : session ? (
+          <>
+            <Row label="Shift" value={session.shiftName} />
+            <Row label="Waktu" value={shiftTime || 'belum dipilih'} />
+            <Row label="Operator" value={session.operatorName || 'belum dipilih'} />
+            {/* The name the admin Devices tab lists, so a phone in the hand can
+                be matched to a row on the screen (doc 06 §4). */}
+            <Row label="Nama HP" value={session.deviceName || '—'} />
+          </>
+        ) : (
+          <Row label="Status" value="Belum login" />
+        )}
       </Card>
 
       <Text style={styles.section}>Penyimpanan HP</Text>
@@ -73,7 +147,39 @@ export default function SettingsScreen() {
         <Row label="Dipasang" value={formatDateTime(firstOpened)} />
       </Card>
 
-      <Button title="Ganti akun / keluar" variant="danger" onPress={() => router.replace('/login')} />
+      {/* Confirmed in-screen rather than in a system dialog: the native alert
+          renders below this app's 16pt floor and cannot be styled to meet it
+          (doc 03 §1). */}
+      {!confirming ? (
+        <Button
+          title={session ? 'Ganti akun / keluar' : 'Login'}
+          variant={session ? 'danger' : 'primary'}
+          onPress={() => (session ? setConfirming(true) : router.replace('/login'))}
+        />
+      ) : (
+        <Card>
+          <Text style={styles.confirmTitle}>Keluar dari {session?.shiftName}?</Text>
+          {unsent > 0 && (
+            <Text style={styles.warn}>
+              {unsent} catatan belum terkirim. Catatan tetap tersimpan di HP, tapi baru
+              bisa dikirim setelah ada yang login lagi.
+            </Text>
+          )}
+          <View style={styles.confirmRow}>
+            <View style={{ flex: 1 }}>
+              <Button title="Batal" variant="secondary" onPress={() => setConfirming(false)} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Button
+                title={leaving ? 'Keluar…' : 'Ya, keluar'}
+                variant="danger"
+                busy={leaving}
+                onPress={signOut}
+              />
+            </View>
+          </View>
+        </Card>
+      )}
 
       <Text style={styles.note}>
         Keluar tidak menghapus catatan yang belum terkirim. Catatan tetap tersimpan
@@ -81,6 +187,11 @@ export default function SettingsScreen() {
       </Text>
     </Screen>
   );
+}
+
+/** Host only — the scheme is noise, and the host is what identifies the server. */
+function hostOf(url: string): string {
+  return url.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
 
 const LABELS: Record<string, string> = {
@@ -102,8 +213,11 @@ function Row({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.sm, gap: space.md },
   label: { ...type.body, color: colors.muted, flexShrink: 1 },
-  value: { ...type.bodyStrong, color: colors.text },
+  value: { ...type.bodyStrong, color: colors.text, flexShrink: 1, textAlign: 'right' },
   section: { ...type.heading, color: colors.text, marginTop: space.md, marginBottom: space.sm },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: space.sm },
+  confirmTitle: { ...type.bodyStrong, color: colors.text, marginBottom: space.sm },
+  confirmRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
+  warn: { ...type.body, color: colors.danger, marginBottom: space.sm },
   note: { ...type.caption, color: colors.muted, marginTop: space.lg },
 });
