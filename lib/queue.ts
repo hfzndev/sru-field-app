@@ -1,7 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import { ActivityPayload, CleaningPayload, ReadingPayload } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
-import { sweepOrphanPhotos } from './photos';
+import { deletePhoto, sweepOrphanPhotos } from './photos';
 import { refreshUnsent } from './status';
 
 /**
@@ -652,12 +652,23 @@ export async function runRetention(): Promise<number> {
       ? " AND status != 'IN_PROGRESS'"
       : '';
 
-    const result = await db.runAsync(
-      `DELETE FROM ${table}
-        WHERE sync_status = 'SYNCED'
+    const expiring = `sync_status = 'SYNCED'
           AND created_at < datetime('now', '-7 days')
-          ${keepUnfinishedCleaning}`,
-    );
+          ${keepUnfinishedCleaning}`;
+
+    // The photos of rows about to go are collected first and deleted with them
+    // (doc 07 §5 purges "record + foto"). Leaving them to the orphan sweep
+    // would keep them on the phone for the length of its grace period, which
+    // exists to protect photos an operator is still working on — not these,
+    // which this very statement is orphaning.
+    for (const column of PHOTO_COLUMNS.filter((c) => c.table === table)) {
+      const rows = await db.getAllAsync<{ local: string }>(
+        `SELECT ${column.local} AS local FROM ${table} WHERE ${column.local} != '' AND ${expiring}`,
+      );
+      for (const row of rows) deletePhoto(row.local);
+    }
+
+    const result = await db.runAsync(`DELETE FROM ${table} WHERE ${expiring}`);
     removed += result.changes;
   }
 
