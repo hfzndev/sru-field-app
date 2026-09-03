@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import { ReadingPayload } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
+import { refreshUnsent } from './status';
 
 /**
  * The record queue (doc 07 §1).
@@ -51,6 +52,9 @@ export async function enqueueReading(reading: Omit<QueuedReading, 'clientId'>): 
     reading.readingAt, new Date().toISOString(),
   );
 
+  // Every badge in the app updates from here, so the count can never lag behind
+  // the record the operator just saved.
+  await refreshUnsent();
   return clientId;
 }
 

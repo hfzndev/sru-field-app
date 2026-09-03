@@ -9,7 +9,10 @@ const config = [
   ...expo,
   {
     rules: {
-      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // Off in favour of the typescript-eslint version from eslint-config-expo:
+      // the base rule reads parameter names inside type annotations as real
+      // bindings and reports them as unused.
+      'no-unused-vars': 'off',
       eqeqeq: ['error', 'smart'],
       'prefer-const': 'error',
       'no-var': 'error',

@@ -1,13 +1,13 @@
 import { useFocusEffect } from 'expo-router';
-import * as Network from 'expo-network';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Alert, Button, Card, Chip, Empty, Heading, OfflineBanner, Screen } from '@/components/ui';
+import { Alert, Button, Card, Chip, Empty, Heading, Screen } from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
 import { getMeta } from '@/lib/db';
 import { formatDateTime } from '@/lib/format';
 import { UnsentRecord, unsentRecords } from '@/lib/queue';
-import { SyncOutcome, isOnline, runSync } from '@/lib/sync';
+import { SyncOutcome, runSync } from '@/lib/sync';
+import { refreshUnsent } from '@/lib/status';
 
 /**
  * Sync screen (doc 03 §3.6).
@@ -23,14 +23,12 @@ import { SyncOutcome, isOnline, runSync } from '@/lib/sync';
 export default function SyncScreen() {
   const [records, setRecords] = useState<UnsentRecord[] | null>(null);
   const [lastSync, setLastSync] = useState<string | null>(null);
-  const [online, setOnline] = useState(true);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SyncOutcome | null>(null);
 
   const refresh = useCallback(async () => {
     setRecords(await unsentRecords());
     setLastSync(await getMeta('lastSyncAt'));
-    setOnline(await isOnline());
   }, []);
 
   useFocusEffect(useCallback(() => {
@@ -39,15 +37,6 @@ export default function SyncScreen() {
     return () => { ignore = true; };
   }, [refresh]));
 
-  // Reacts to the connection returning, which in a plant happens as an operator
-  // walks back toward the control room rather than at any moment they choose.
-  useEffect(() => {
-    const subscription = Network.addNetworkStateListener(({ isConnected }) => {
-      setOnline(!!isConnected);
-    });
-    return () => subscription.remove();
-  }, []);
-
   async function syncNow() {
     setBusy(true);
     setOutcome(null);
@@ -55,6 +44,7 @@ export default function SyncScreen() {
       const result = await runSync();
       setOutcome(result);
       await refresh();
+      await refreshUnsent();
     } finally {
       setBusy(false);
     }
@@ -64,9 +54,7 @@ export default function SyncScreen() {
   const failed = records?.filter((r) => r.status === 'SYNC_ERROR').length ?? 0;
 
   return (
-    <>
-      <OfflineBanner visible={!online} />
-      <Screen>
+    <Screen>
         <Heading sub="Aman dipencet berkali-kali — data tidak akan terkirim dua kali.">
           Sinkronisasi
         </Heading>
@@ -129,8 +117,7 @@ export default function SyncScreen() {
             </Card>
           ))
         )}
-      </Screen>
-    </>
+    </Screen>
   );
 }
 

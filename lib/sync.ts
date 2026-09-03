@@ -2,6 +2,7 @@ import * as Network from 'expo-network';
 import { ApiError, OfflineError, pull as apiPull, sync as apiSync } from './api';
 import { getDb, getMetaNumber, setMeta } from './db';
 import { markError, markSynced, pendingReadings, runRetention } from './queue';
+import { refreshUnsent } from './status';
 import { getToken } from './session';
 
 /**
@@ -131,6 +132,7 @@ async function execute(): Promise<SyncOutcome> {
 
   const purged = await runRetention();
   await setMeta('lastSyncAt', new Date().toISOString());
+  await refreshUnsent();
 
   return {
     ok: true,

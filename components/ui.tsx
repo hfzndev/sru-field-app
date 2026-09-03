@@ -22,18 +22,24 @@ import {
   statusColor,
   type,
 } from '@/constants/theme';
+import { useOnline } from '@/lib/status';
 
 /**
  * Shared primitives. Every tappable thing here is at least TOUCH_TARGET tall by
  * construction, so no screen has to remember to enforce it (doc 03 §1).
  */
 
-export function Screen({ children, scroll = true, style }: {
-  children: ReactNode; scroll?: boolean; style?: ViewStyle;
+export function Screen({ children, scroll = true, style, banner = true }: {
+  children: ReactNode; scroll?: boolean; style?: ViewStyle; banner?: boolean;
 }) {
+  // The offline banner lives here rather than in each screen. Doc 03 §1 wants
+  // it visible whenever there is no connection, and a screen that forgot to
+  // render it would quietly tell an operator everything is fine.
+  const online = useOnline();
   const inner = <View style={[styles.screenInner, style]}>{children}</View>;
   return (
     <SafeAreaView style={styles.screen} edges={['left', 'right', 'bottom']}>
+      {banner && <OfflineBanner visible={!online} />}
       {scroll
         ? <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.scrollPad}>{inner}</ScrollView>
         : inner}

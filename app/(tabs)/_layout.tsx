@@ -1,9 +1,10 @@
 import { Link, Tabs } from 'expo-router';
 import * as Network from 'expo-network';
 import { useEffect } from 'react';
-import { ColorValue, Pressable, Text } from 'react-native';
+import { ColorValue, Pressable, Text, View } from 'react-native';
 import { TOUCH_TARGET, colors, space, type } from '@/constants/theme';
 import { runSync } from '@/lib/sync';
+import { useUnsent } from '@/lib/status';
 
 /**
  * Bottom tabs.
@@ -14,6 +15,31 @@ import { runSync } from '@/lib/sync';
  */
 function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
   return <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
+}
+
+/**
+ * The unsent count, in the header of every tab (doc 03 §1).
+ *
+ * Hidden at zero rather than shown as "0": a permanent badge becomes furniture
+ * and stops being read, and the whole point is that it is noticed on the day it
+ * is not zero.
+ */
+function UnsentBadge() {
+  const unsent = useUnsent();
+  if (unsent === 0) return null;
+  return (
+    <View style={{
+      backgroundColor: colors.warnSoft,
+      paddingHorizontal: space.md,
+      paddingVertical: 4,
+      borderRadius: 999,
+      marginRight: space.xs,
+    }}>
+      <Text style={{ color: colors.warn, fontWeight: '700', fontSize: 15 }}>
+        ⬆ {unsent}
+      </Text>
+    </View>
+  );
 }
 
 export default function TabsLayout() {
@@ -42,15 +68,18 @@ export default function TabsLayout() {
         headerStyle: { backgroundColor: colors.surface },
         headerTitleStyle: { ...type.heading, color: colors.text },
         headerRight: () => (
-          <Link href="/settings" asChild>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <UnsentBadge />
+            <Link href="/settings" asChild>
             <Pressable
               accessibilityLabel="Pengaturan"
               hitSlop={8}
               style={{ minWidth: TOUCH_TARGET, minHeight: TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', marginRight: space.sm }}
             >
-              <Text style={{ fontSize: 20 }}>⚙️</Text>
-            </Pressable>
-          </Link>
+                <Text style={{ fontSize: 20 }}>⚙️</Text>
+              </Pressable>
+            </Link>
+          </View>
         ),
       }}
     >
