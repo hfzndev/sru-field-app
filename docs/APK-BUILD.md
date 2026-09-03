@@ -136,6 +136,32 @@ Fix the plugin — do not work around it by editing `build.gradle`.
    build is pointed at a local server; check it after installing.
 3. `npm run lint && npm run typecheck && npx jest`.
 
+### Always `prebuild --clean`, and check the built bundle
+
+Gradle fingerprints the JS bundle task on **files**, not on environment. Change
+`EXPO_PUBLIC_API_URL` and rebuild without cleaning and you get:
+
+```
+> Task :app:createBundleReleaseJsAndAssets UP-TO-DATE
+```
+
+— an APK carrying the *previous* bundle, pointing at the *previous* server,
+with nothing in the build output suggesting anything is wrong. `prebuild
+--clean` avoids it by deleting `android/` outright, which is why the build
+recipe starts there and why skipping it to save a few minutes is a false
+economy.
+
+Do not trust that from memory. Read the URL out of the APK you are about to
+hand over:
+
+```powershell
+python -c "import zipfile,re; d=zipfile.ZipFile(r'app\build\outputs\apk\release\app-release.apk').read('assets/index.android.bundle'); print('ops.sruipal.com:', len(re.findall(rb'ops\.sruipal\.com', d)), '| localhost:', len(re.findall(rb'127\.0\.0\.1', d)))"
+```
+
+A shippable APK has at least one `ops.sruipal.com` and zero `127.0.0.1`. This
+takes a second and is the only check that looks at the artifact itself rather
+than at the source it was supposed to be built from.
+
 ## Installing on a handset
 
 ```powershell
