@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -195,6 +195,38 @@ export function Alert({ error, ok }: { error?: string | null; ok?: string | null
 }
 
 /**
+ * Brief confirmation after a save (doc 03 §3.2, step 3).
+ *
+ * It states both halves — saved, and not yet sent — because those are different
+ * facts and an operator needs to trust the first without being misled about the
+ * second.
+ */
+export function Toast({ message, onDone }: { message: string | null; onDone: () => void }) {
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = setTimeout(onDone, 2600);
+    return () => clearTimeout(timer);
+  }, [message, onDone]);
+
+  if (!message) return null;
+  return (
+    <View style={styles.toast} pointerEvents="none">
+      <Text style={styles.toastText}>{message}</Text>
+    </View>
+  );
+}
+
+/** "Langkah 2 dari 3" — one step per screen, so progress must be visible. */
+export function StepHeader({ step, total, title }: { step: number; total: number; title: string }) {
+  return (
+    <View style={{ marginBottom: space.lg }}>
+      <Text style={styles.stepCount}>Langkah {step} dari {total}</Text>
+      <Text style={styles.title}>{title}</Text>
+    </View>
+  );
+}
+
+/**
  * Shown whenever the device has no connection (doc 03 §1). Deliberately
  * reassuring: offline is the expected state in the plant, not a fault.
  */
@@ -303,4 +335,19 @@ const styles = StyleSheet.create({
 
   offline: { backgroundColor: colors.warnSoft, paddingVertical: space.sm, paddingHorizontal: space.lg },
   offlineText: { ...type.caption, color: colors.warn, textAlign: 'center', fontWeight: '600' },
+
+  toast: {
+    position: 'absolute',
+    left: space.lg,
+    right: space.lg,
+    bottom: space.xl,
+    backgroundColor: '#14181d',
+    paddingVertical: space.md,
+    paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+  },
+  toastText: { ...type.bodyStrong, color: '#fff', textAlign: 'center' },
+
+  stepCount: { ...type.caption, color: colors.accent, fontWeight: '700', marginBottom: 2 },
 });
