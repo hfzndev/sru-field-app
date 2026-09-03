@@ -29,6 +29,39 @@ The web target is a convenience for checking layout quickly. It is not a
 substitute for a device: the native modules this app depends on — SQLite,
 SecureStore, the camera — behave differently or not at all there.
 
+## Emulator
+
+An AVD named `sru-field` is set up locally: Android 14 (API 34), 1080×2340,
+2GB RAM. The specification is deliberately modest — doc 01 §6 says these ship to
+cheap handsets, and testing on an over-specced emulator hides the jank an
+operator would actually hit.
+
+```bash
+export ANDROID_HOME="$LOCALAPPDATA/Android/Sdk"
+"$ANDROID_HOME/emulator/emulator.exe" -avd sru-field -no-boot-anim &
+adb wait-for-device
+npm start          # then press "a"
+```
+
+To recreate it from nothing (needs `cmdline-tools` in the SDK):
+
+```bash
+android sdk install "system-images/android-34/google_apis/x86_64"
+avdmanager create avd -n sru-field -k "system-images;android-34;google_apis;x86_64" -d pixel_5
+```
+
+Useful while testing:
+
+```bash
+adb exec-out screencap -p > shot.png    # screenshot
+adb shell svc wifi disable              # simulate losing signal
+adb shell svc data disable
+```
+
+The emulator runs Expo Go, which covers every module in this app's dependency
+list. A custom dev client is only needed if a package outside the Expo SDK is
+added later.
+
 ## Design rules that are not negotiable
 
 These come from doc 03 §1 and doc 02 §1.1, and they exist because of who uses
