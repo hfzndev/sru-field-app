@@ -16,7 +16,14 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.hfzndev.srufieldapp",
-      "versionCode": 1
+      "versionCode": 1,
+      "blockedPermissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -34,13 +41,16 @@
         }
       ],
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withReleaseSigning",
+      "./plugins/withGradleMemory",
+      "./plugins/withCmakeVersion"
     ],
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "https://field.sruipal.com"
+      "apiUrl": "https://ops.sruipal.com"
     }
   }
 }

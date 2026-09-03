@@ -3,7 +3,7 @@
 Android app for **SRU field operators** — offline-first capture of tank levels,
 activities and cleaning at the sulfur IPAL in Cilacap.
 
-Built against `../sru-field-docs` (v1.1) and the API in `../sru-field-api`. The
+Built against `../sru-field-docs` (v1.2) and the API in `../sru-field-api`. The
 documents are the source of truth; where this code and those documents disagree,
 the documents win.
 
@@ -14,6 +14,11 @@ Phase 4 (doc 01 §9).
 ## Requirements
 
 Node 22+, and the Android SDK for building or running on a device.
+
+Building a release APK additionally needs SDK **CMake 3.31.6** — the default
+3.22.1 cannot build this project on Windows. See
+[`docs/APK-BUILD.md`](docs/APK-BUILD.md), which also covers the release keystore
+and why losing it costs unsent field records.
 
 ## Run
 

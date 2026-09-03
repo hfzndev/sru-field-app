@@ -1,0 +1,168 @@
+# Building the APK locally (doc 09 §4, lapis 3)
+
+There is no Play Store in this product and no EAS account. The APK is built on a
+workstation with Gradle and handed to the handsets directly, so the signing key
+is not a formality — it is the only thing that decides whether a phone will
+accept an update.
+
+## What the build machine needs
+
+| Requirement | Version | Notes |
+|---|---|---|
+| JDK | 17 or 21 | Expo documents 17. Android Studio ships a JBR at `C:\Program Files\Android\Android Studio\jbr` — 21 there builds this project fine. |
+| Android SDK | Platform 36 + any build-tools | Already present if Android Studio is installed. |
+| **SDK CMake** | **3.31.6** | **Required on Windows — see below.** Not installed by default. |
+| Node | 22 | Same as the backend. |
+
+Set these before any Gradle command (PowerShell):
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+```
+
+### CMake 3.31.6 is not optional on Windows
+
+```powershell
+& "$env:ANDROID_HOME\cmdline-tools\latest\bin\android.exe" sdk install cmake/3.31.6
+```
+
+AGP defaults to CMake 3.22.1, which bundles **ninja 1.10**. That ninja refuses
+any path over 260 characters with `Filename longer than 260 characters` —
+its own check, not the operating system's, so it fails even though this machine
+already has `LongPathsEnabled=1`.
+
+React Native's codegen mirrors each source file's absolute path into the object
+file's path, which puts one `react-native-gesture-handler` shadow node at **293
+characters relative to the build directory** — already over the limit before any
+project path is prepended. So moving the project somewhere shorter does not
+help; only a newer ninja does. ninja 1.12 lifted the limit and ships with SDK
+CMake 3.30+; 3.22.1 was never back-patched.
+
+`plugins/withCmakeVersion.js` pins the version so the build cannot silently fall
+back to the broken one.
+
+## One-time: create the release keystore
+
+Run this yourself. The password must not pass through a chat transcript, a
+commit, or a CI log.
+
+```powershell
+& "$env:JAVA_HOME\bin\keytool.exe" -genkeypair -v -storetype PKCS12 -keystore sru-field-release.keystore -alias sru-field -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Then put the keystore **outside this repository** — `C:\keystores\` or a
+password manager's file vault — and record the credentials in
+`~/.gradle/gradle.properties` (that is `C:\Users\<you>\.gradle\gradle.properties`),
+which is per-machine and never committed:
+
+```properties
+SRU_RELEASE_STORE_FILE=C:/keystores/sru-field-release.keystore
+SRU_RELEASE_STORE_PASSWORD=...
+SRU_RELEASE_KEY_ALIAS=sru-field
+SRU_RELEASE_KEY_PASSWORD=...
+```
+
+### Back the keystore up in two places, today
+
+Android identifies an app by its signing key. If this keystore is lost, no
+future APK can update the installed one — every handset has to **uninstall**
+first, and uninstalling deletes the local SQLite database, **including records
+that are still PENDING_SYNC**. Losing the key is therefore a data-loss event for
+any shift that happens to be offline at the time, not just an inconvenience.
+
+Back it up alongside the VPS `.env.field` secrets.
+
+## Building
+
+```powershell
+npx expo prebuild --platform android --clean
+cd android
+.\gradlew.bat assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+```
+
+The APK lands at `android/app/build/outputs/apk/release/app-release.apk`.
+
+### Do not drop the `-PreactNativeArchitectures` flag
+
+A default build packages four sets of native libraries. Two of them — `x86` and
+`x86_64` — exist for emulators and are **54MB of a 127MB APK**. No handset in
+the plant runs them, and that weight is paid again by every phone on every
+release, over the plant's own network (doc 09 §4, lapis 3).
+
+The flag is React Native's own mechanism and it also skips *compiling* the
+unused architectures, so the build is faster too. Setting `abiFilters` in the
+`release` build type instead does **not** work here: it left all four ABIs in
+the APK.
+
+If a release APK ever comes out at ~120MB, this flag was forgotten.
+
+For a quick check on the emulator, build debug — it keeps every ABI, so it
+installs on the standard x86_64 emulator, and it needs no release key:
+
+```powershell
+.\gradlew.bat assembleDebug   # → app/build/outputs/apk/debug/app-debug.apk
+```
+
+A **release** APK built with the flag above will not install on an x86_64
+emulator. That is expected; test release builds on a real handset.
+
+### Why `--clean`, and why `android/` is not committed
+
+`android/` is generated and gitignored. Every customisation lives in `app.json`
+or in `plugins/`, because `prebuild --clean` deletes the directory and rebuilds
+it — anything edited by hand in there disappears without a trace on the next
+build. This is Expo's documented model.
+
+`plugins/withReleaseSigning.js` is the one that matters: the prebuild template
+signs **release** builds with Android's public debug key (password `android`),
+which would let anyone build an APK that installs straight over ours as an
+update. The plugin repoints release signing at the real keystore and makes a
+release build **fail** when the key is missing, rather than quietly producing a
+debug-signed APK that looks completely normal until it is too late.
+
+If the template ever changes, prebuild fails with a message naming the plugin.
+Fix the plugin — do not work around it by editing `build.gradle`.
+
+## Before every release build
+
+1. Bump `expo.version` (semantic) **and** `expo.android.versionCode` (+1) in
+   `app.json`. Android refuses to install an APK whose `versionCode` is not
+   higher than the installed one, so a forgotten bump looks like "the update
+   did not work" on every handset.
+2. Confirm `expo.extra.apiUrl` is `https://ops.sruipal.com` — a build pointing
+   at a local server still runs perfectly and quietly writes a whole shift of
+   records somewhere nobody will look. Settings shows a red warning when the
+   build is pointed at a local server; check it after installing.
+3. `npm run lint && npm run typecheck && npx jest`.
+
+## Installing on a handset
+
+```powershell
+adb install -r android\app\build\outputs\apk\release\app-release.apk
+```
+
+`-r` reinstalls in place and **keeps the local database**, which is the whole
+point of getting the signing key right. It only works when the new APK is signed
+with the same key as the installed one; if it fails with
+`INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the keys differ — stop and work out which
+key is correct rather than uninstalling, because uninstalling discards unsent
+records.
+
+Verify what actually signed a built APK:
+
+```powershell
+& "$env:ANDROID_HOME\build-tools\37.0.0\apksigner.bat" verify --print-certs app-release.apk
+```
+
+## Permissions
+
+`app.json` blocks five permissions that native dependencies pull in but this
+app does not use: `CAMERA`, `RECORD_AUDIO`, `READ/WRITE_EXTERNAL_STORAGE` and
+`SYSTEM_ALERT_WINDOW`. They arrive via `expo-camera`, which is installed ready
+for Phase 3 but not yet used, and an APK that asks an operator for the
+microphone is a question plant IT is right to ask about.
+
+**Phase 3 must remove `android.permission.CAMERA` from `blockedPermissions`**
+when the photo feature lands, or the camera will fail at runtime with a
+permission denial that looks like a bug in the camera code.

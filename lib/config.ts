@@ -12,7 +12,7 @@ import Constants from 'expo-constants';
  * On the emulator, `adb reverse tcp:3000 tcp:3000` makes the host's server
  * reachable at 127.0.0.1:3000 from inside the device.
  */
-const PRODUCTION_URL = 'https://field.sruipal.com';
+const PRODUCTION_URL = 'https://ops.sruipal.com';
 
 function resolve(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL;
