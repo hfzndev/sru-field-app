@@ -1,69 +1,55 @@
-import { SymbolView } from 'expo-symbols';
 import { Link, Tabs } from 'expo-router';
-import { Platform, Pressable } from 'react-native';
+import { ColorValue, Pressable, Text } from 'react-native';
+import { TOUCH_TARGET, colors, space, type } from '@/constants/theme';
 
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
+/**
+ * Bottom tabs.
+ *
+ * Only the Phase 2 scope is here: Beranda, Tangki and Sync. Aktivitas and
+ * Bersih-bersih arrive in Phase 3, Maintenance in Phase 4. Showing them now as
+ * dead tabs would train operators to ignore parts of the bar.
+ */
+function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
+  return <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
+}
 
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
+export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme].tint,
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
-        headerShown: useClientOnlyValue(false, true),
-      }}>
+        tabBarActiveTintColor: colors.accent,
+        tabBarInactiveTintColor: colors.muted,
+        // 16pt labels and a taller bar: doc 03 §1 sets 16 as the floor for
+        // readable text, and the usual 12pt tab label sits below it. With only
+        // three tabs there is room, so the floor holds here too.
+        tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 74, paddingTop: 6, paddingBottom: 10 },
+        tabBarLabelStyle: { fontSize: 16, fontWeight: '600' },
+        headerStyle: { backgroundColor: colors.surface },
+        headerTitleStyle: { ...type.heading, color: colors.text },
+        headerRight: () => (
+          <Link href="/settings" asChild>
+            <Pressable
+              accessibilityLabel="Pengaturan"
+              hitSlop={8}
+              style={{ minWidth: TOUCH_TARGET, minHeight: TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', marginRight: space.sm }}
+            >
+              <Text style={{ fontSize: 20 }}>⚙️</Text>
+            </Pressable>
+          </Link>
+        ),
+      }}
+    >
       <Tabs.Screen
         name="index"
-        options={{
-          title: 'Tab One',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-          headerRight: () => (
-            <Link href="/modal" asChild>
-              <Pressable style={{ marginRight: 15 }}>
-                {({ pressed }) => (
-                  <SymbolView
-                    name={{ ios: 'info.circle', android: 'info', web: 'info' }}
-                    size={25}
-                    tintColor={Colors[colorScheme].text}
-                    style={{ opacity: pressed ? 0.5 : 1 }}
-                  />
-                )}
-              </Pressable>
-            </Link>
-          ),
-        }}
+        options={{ title: 'Beranda', tabBarIcon: ({ color }) => <TabIcon glyph="🏠" color={color} /> }}
       />
       <Tabs.Screen
-        name="two"
-        options={{
-          title: 'Tab Two',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{
-                ios: 'chevron.left.forwardslash.chevron.right',
-                android: 'code',
-                web: 'code',
-              }}
-              tintColor={color}
-              size={28}
-            />
-          ),
-        }}
+        name="tanks"
+        options={{ title: 'Tangki', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🛢️" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="sync"
+        options={{ title: 'Sync', tabBarIcon: ({ color }) => <TabIcon glyph="🔄" color={color} /> }}
       />
     </Tabs>
   );
