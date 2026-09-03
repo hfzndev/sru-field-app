@@ -24,9 +24,11 @@ import { storePhoto } from '@/lib/photos';
  * instead of quietly returning.
  */
 export default function CameraScreen() {
-  const { returnTo, slot, label } = useLocalSearchParams<{
+  // returnTo and label are this screen's own; everything else belongs to the
+  // caller and is handed straight back, so a screen can send along whatever it
+  // needs to find itself again — a session id, for instance.
+  const { returnTo, label, ...caller } = useLocalSearchParams<{
     returnTo: string;
-    slot?: string;
     label?: string;
   }>();
 
@@ -51,9 +53,11 @@ export default function CameraScreen() {
       router.replace({
         pathname: returnTo as never,
         params: {
-          photoUri: stored.uri,
+          ...caller,
+          // The filename, not the uri — a uri survives a router param only by
+          // luck, because params are percent-decoded in transit.
+          photoName: stored.name,
           photoBytes: String(stored.bytes),
-          ...(slot ? { slot } : {}),
         },
       });
     } catch (err) {

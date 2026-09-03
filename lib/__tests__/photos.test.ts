@@ -14,7 +14,7 @@
  * factories above the imports and rejects any other out-of-scope reference.
  */
 
-import { MAX_PHOTO_BYTES, storePhoto, sweepOrphanPhotos } from '../photos';
+import { MAX_PHOTO_BYTES, ORPHAN_GRACE_MS, storePhoto, sweepOrphanPhotos } from '../photos';
 
 const mockState = {
   /** Bytes reported for each successive saveAsync, in order. */
@@ -41,6 +41,9 @@ jest.mock('expo-file-system', () => {
     uri: string;
     constructor(...parts: any[]) {
       this.uri = join(parts);
+    }
+    get name(): string {
+      return this.uri.split('/').pop() ?? '';
     }
     get size(): number | null {
       const index = mockState.saveUris.indexOf(this.uri);
@@ -156,7 +159,7 @@ describe('storePhoto compression ladder', () => {
 
     const result = await storePhoto('camera://original.jpg');
 
-    expect(result.uri).toContain('fixed-uuid.jpg');
+    expect(result.uri).toContain('-fixed-uuid.jpg');
     expect(mockState.moved).toHaveLength(1);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
@@ -187,23 +190,28 @@ describe('storePhoto compression ladder', () => {
 });
 
 describe('sweepOrphanPhotos', () => {
+  const NOW = 1_800_000_000_000;
+  const OLD = NOW - ORPHAN_GRACE_MS - 1;
+  const FRESH = NOW - 1000;
+  const file = (t: number, id = 'x') => `doc:/field-photos/${t}-${id}.jpg`;
+
   it('removes only files no record refers to', () => {
     reset([]);
     mockState.dirCreated = true;
-    mockState.dirEntries = ['doc:/field-photos/kept.jpg', 'doc:/field-photos/orphan.jpg'];
+    mockState.dirEntries = [file(OLD, 'kept'), file(OLD, 'orphan')];
 
-    const removed = sweepOrphanPhotos(['doc:/field-photos/kept.jpg']);
+    const removed = sweepOrphanPhotos([file(OLD, 'kept')], NOW);
 
     expect(removed).toBe(1);
-    expect(mockState.deleted).toEqual(['doc:/field-photos/orphan.jpg']);
+    expect(mockState.deleted).toEqual([file(OLD, 'orphan')]);
   });
 
   it('keeps everything when every file is referenced', () => {
     reset([]);
     mockState.dirCreated = true;
-    mockState.dirEntries = ['doc:/field-photos/a.jpg', 'doc:/field-photos/b.jpg'];
+    mockState.dirEntries = [file(OLD, 'a'), file(OLD, 'b')];
 
-    const removed = sweepOrphanPhotos(['doc:/field-photos/a.jpg', 'doc:/field-photos/b.jpg']);
+    const removed = sweepOrphanPhotos([file(OLD, 'a'), file(OLD, 'b')], NOW);
 
     expect(removed).toBe(0);
     expect(mockState.deleted).toEqual([]);
@@ -212,12 +220,45 @@ describe('sweepOrphanPhotos', () => {
   it('ignores empty paths rather than treating them as a file to keep', () => {
     reset([]);
     mockState.dirCreated = true;
-    mockState.dirEntries = ['doc:/field-photos/orphan.jpg'];
+    mockState.dirEntries = [file(OLD, 'orphan')];
 
     // Records with no photo store '' — that must not accidentally protect
     // anything, nor crash the sweep.
-    const removed = sweepOrphanPhotos(['', 'doc:/field-photos/kept.jpg']);
+    const removed = sweepOrphanPhotos(['', file(OLD, 'kept')], NOW);
 
     expect(removed).toBe(1);
+  });
+
+  it('never deletes a photo the operator has only just taken', () => {
+    // The regression that matters. A BEFORE photo is written when the shutter
+    // is pressed and only becomes referenced once the location form is saved.
+    // Sync runs on app open and on every reconnect, so without a grace period a
+    // background sync deletes the photo mid-form — and the area is about to be
+    // cleaned, so it cannot be retaken.
+    reset([]);
+    mockState.dirCreated = true;
+    mockState.dirEntries = [file(FRESH, 'just-taken')];
+
+    const removed = sweepOrphanPhotos([], NOW);
+
+    expect(removed).toBe(0);
+    expect(mockState.deleted).toEqual([]);
+  });
+
+  it('does sweep an unreferenced photo once it is genuinely abandoned', () => {
+    reset([]);
+    mockState.dirCreated = true;
+    mockState.dirEntries = [file(OLD, 'abandoned')];
+
+    expect(sweepOrphanPhotos([], NOW)).toBe(1);
+  });
+
+  it('keeps a file whose name carries no readable capture time', () => {
+    reset([]);
+    mockState.dirCreated = true;
+    mockState.dirEntries = ['doc:/field-photos/legacy-name.jpg'];
+
+    expect(sweepOrphanPhotos([], NOW)).toBe(0);
+    expect(mockState.deleted).toEqual([]);
   });
 });

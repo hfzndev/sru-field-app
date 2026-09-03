@@ -2,8 +2,8 @@ import * as Network from 'expo-network';
 import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto } from './api';
 import { getDb, getMetaNumber, setMeta } from './db';
 import {
-  markError, markPhotoUploaded, markSynced, pendingActivities, pendingPhotos,
-  pendingReadings, runRetention,
+  markError, markPhotoUploaded, markSynced, pendingActivities, pendingCleaning,
+  pendingPhotos, pendingReadings, runRetention,
 } from './queue';
 import { refreshUnsent } from './status';
 import { getToken } from './session';
@@ -98,14 +98,15 @@ async function execute(): Promise<SyncOutcome> {
 
   const readings = (await pendingReadings()).filter((r) => !blocked.has(r.clientId));
   const activities = (await pendingActivities()).filter((a) => !blocked.has(a.clientId));
+  const cleaning = (await pendingCleaning()).filter((c) => !blocked.has(c.clientId));
 
   let pushed = 0;
   let duplicates = 0;
   let rejected = 0;
 
-  if (readings.length > 0 || activities.length > 0) {
+  if (readings.length > 0 || activities.length > 0 || cleaning.length > 0) {
     try {
-      const response = await apiSync(token, { readings, activities });
+      const response = await apiSync(token, { readings, activities, cleaning });
 
       // Acks are applied one at a time. If the app dies partway through, the
       // records already marked stay marked and the rest are simply retried —

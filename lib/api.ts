@@ -247,19 +247,33 @@ export type ActivityPayload = {
   shiftTime: string;
 };
 
+export type CleaningPayload = {
+  clientId: string;
+  location: string;
+  note: string;
+  beforePhoto: string;
+  beforePhotoAt: string | null;
+  afterPhoto: string;
+  afterPhotoAt: string | null;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
 export type SyncPayload = {
   readings?: ReadingPayload[];
   activities?: ActivityPayload[];
-  cleaning?: unknown[];
+  cleaning?: CleaningPayload[];
   taskLogs?: unknown[];
 };
 
 export type SyncAck = {
   clientId: string;
   serverId: number;
+  /** Set when the server updated an existing cleaning session rather than inserting (doc 07 §4). */
+  updated?: boolean;
   levelMm?: number;
   deviationMm?: number | null;
-  updated?: boolean;
 };
 
 export type SyncResponse = {

@@ -99,6 +99,10 @@ export default function TabsLayout() {
         options={{ title: 'Aktivitas', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="📝" color={color} /> }}
       />
       <Tabs.Screen
+        name="cleaning"
+        options={{ title: 'Bersih', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🧹" color={color} /> }}
+      />
+      <Tabs.Screen
         name="sync"
         options={{ title: 'Sync', tabBarIcon: ({ color }) => <TabIcon glyph="🔄" color={color} /> }}
       />

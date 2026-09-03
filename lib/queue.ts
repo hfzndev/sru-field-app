@@ -1,5 +1,5 @@
 import * as Crypto from 'expo-crypto';
-import { ActivityPayload, ReadingPayload } from './api';
+import { ActivityPayload, CleaningPayload, ReadingPayload } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
 import { sweepOrphanPhotos } from './photos';
 import { refreshUnsent } from './status';
@@ -257,6 +257,141 @@ export async function listActivities(limit = 100): Promise<ActivityRow[]> {
     shiftTime: r.shift_time,
     syncStatus: r.sync_status,
   }));
+}
+
+/* ------------------------------------------------------------------ cleaning
+
+   The only two-stage record in the app (doc 02 §3). A session is created with
+   its BEFORE photo and saved as IN_PROGRESS; the area is cleaned; the AFTER
+   photo arrives later — sometimes much later, and often after the first stage
+   has already synced.
+
+   That makes cleaning the single exception to "SYNCED is terminal" (doc 07 §1).
+   Everywhere else in this app a synced record is finished.                    */
+
+export type QueuedCleaning = {
+  location: string;
+  note: string;
+  beforePhotoLocalUri: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/** Starts a session from its BEFORE photo. Returns the client_id. */
+export async function enqueueCleaning(session: QueuedCleaning): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO cleaning_sessions
+       (client_id, location, note, status, operator_name, shift_group, shift_time,
+        before_photo_local_uri, before_photo_at, sync_status, created_at)
+     VALUES (?, ?, ?, 'IN_PROGRESS', ?, ?, ?, ?, ?, 'PENDING_SYNC', ?)`,
+    clientId, session.location, session.note, session.operatorName,
+    session.shiftGroup, session.shiftTime, session.beforePhotoLocalUri, now, now,
+  );
+
+  await refreshUnsent();
+  return clientId;
+}
+
+/**
+ * Attaches the AFTER photo and completes the session.
+ *
+ * A session that already synced is pushed back to PENDING_SYNC so the completed
+ * version goes up (doc 07 §1). The server treats that as an upsert on the same
+ * client_id and moves only the four columns it is allowed to (doc 07 §4), so
+ * the location, the BEFORE photo and the attribution stay as first recorded
+ * even though the record is being sent a second time.
+ */
+export async function completeCleaning(clientId: string, afterPhotoLocalUri: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE cleaning_sessions
+        SET after_photo_local_uri = ?, after_photo_at = ?, status = 'DONE',
+            sync_status = 'PENDING_SYNC', error_code = NULL, error_message = NULL
+      WHERE client_id = ?`,
+    afterPhotoLocalUri, new Date().toISOString(), clientId,
+  );
+  await refreshUnsent();
+}
+
+/** Cleaning sessions waiting to go, oldest first. */
+export async function pendingCleaning(): Promise<CleaningPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM cleaning_sessions WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    location: r.location,
+    note: r.note ?? '',
+    beforePhoto: r.before_photo ?? '',
+    beforePhotoAt: r.before_photo_at ?? null,
+    afterPhoto: r.after_photo ?? '',
+    afterPhotoAt: r.after_photo_at ?? null,
+    operatorName: r.operator_name,
+    shiftGroup: r.shift_group,
+    shiftTime: r.shift_time,
+  }));
+}
+
+export type CleaningRow = {
+  clientId: string;
+  location: string;
+  note: string;
+  status: string;
+  operatorName: string;
+  shiftTime: string;
+  beforePhotoLocalUri: string;
+  beforePhoto: string;
+  afterPhotoLocalUri: string;
+  afterPhoto: string;
+  beforePhotoAt: string | null;
+  afterPhotoAt: string | null;
+  syncStatus: string;
+  createdAt: string;
+};
+
+/**
+ * Sessions for the list, unfinished ones first.
+ *
+ * An IN_PROGRESS session is a job the shift still owes; a DONE one is history.
+ * Sorting by status before time puts the outstanding work where it gets seen.
+ */
+export async function listCleaning(limit = 100): Promise<CleaningRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM cleaning_sessions
+      ORDER BY (status = 'IN_PROGRESS') DESC, created_at DESC
+      LIMIT ?`,
+    limit,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    location: r.location,
+    note: r.note ?? '',
+    status: r.status,
+    operatorName: r.operator_name,
+    shiftTime: r.shift_time,
+    beforePhotoLocalUri: r.before_photo_local_uri ?? '',
+    beforePhoto: r.before_photo ?? '',
+    afterPhotoLocalUri: r.after_photo_local_uri ?? '',
+    afterPhoto: r.after_photo ?? '',
+    beforePhotoAt: r.before_photo_at ?? null,
+    afterPhotoAt: r.after_photo_at ?? null,
+    syncStatus: r.sync_status,
+    createdAt: r.created_at,
+  }));
+}
+
+export async function getCleaning(clientId: string): Promise<CleaningRow | null> {
+  const rows = await listCleaning(500);
+  return rows.find((r) => r.clientId === clientId) ?? null;
 }
 
 /** Which table a client_id belongs to, so acks can be applied generically. */

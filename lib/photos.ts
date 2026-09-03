@@ -41,10 +41,25 @@ const LADDER = [
 export type StoredPhoto = {
   /** file:// URI inside the documents directory. */
   uri: string;
+  /** Just the filename. Safe to carry through a route param — see photoUriFor. */
+  name: string;
   bytes: number;
   width: number;
   height: number;
 };
+
+/**
+ * Rebuilds a stored photo's uri from its filename.
+ *
+ * Screens hand photos to each other by name rather than by uri because the
+ * documents path can contain percent signs (Expo Go sandboxes each project
+ * under an encoded directory), and a router param is percent-decoded on the way
+ * through — which silently turns %2540 into %40 and points at a file that does
+ * not exist. A uuid filename has no such characters.
+ */
+export function photoUriFor(name: string): string {
+  return new File(photoDirectory(), name).uri;
+}
 
 function photoDirectory(): Directory {
   const dir = new Directory(Paths.document, PHOTO_DIR);
@@ -105,11 +120,15 @@ export async function storePhoto(sourceUri: string): Promise<StoredPhoto> {
     console.warn(`photo still ${attempt.bytes} bytes after full compression ladder`);
   }
 
-  const destination = new File(photoDirectory(), `${Crypto.randomUUID()}.jpg`);
+  // The capture time leads the filename so the orphan sweep can tell a photo
+  // taken thirty seconds ago from one abandoned last week without asking the
+  // filesystem for timestamps — which the modern API does not expose.
+  const destination = new File(photoDirectory(), `${Date.now()}-${Crypto.randomUUID()}.jpg`);
   new File(attempt.uri).move(destination);
 
   return {
     uri: destination.uri,
+    name: destination.name,
     bytes: destination.size ?? attempt.bytes,
     width: attempt.width,
     height: attempt.height,
@@ -142,20 +161,34 @@ export function photoExists(uri: string | null | undefined): boolean {
 }
 
 /**
- * Deletes stored photos that no record refers to.
+ * How long an unreferenced photo is left alone before it counts as abandoned.
  *
- * A photo file is written the moment the shutter is pressed, but it only gains
- * an owner when the operator finishes the form. Backing out — or the app being
- * killed in between — leaves a file nothing points at. Individually trivial;
- * over a year on a shared handset, not.
+ * A photo file exists from the moment the shutter is pressed, but it only gains
+ * an owner when the operator finishes the form — and sync runs on app open and
+ * whenever the connection returns. Without this grace period, a background sync
+ * during the thirty seconds someone spends typing a location deletes the BEFORE
+ * photo they just took, and the area is about to be cleaned, so there is no
+ * second chance to take it.
  *
- * This is the phone-side twin of the server's orphan sweeper (doc 09 §5), and
- * it takes the same care: it deletes only what it can prove is unreferenced.
+ * The server's sweeper leaves orphans for seven days for the same reason
+ * (doc 09 §5). Six hours is far longer than any form takes and far shorter than
+ * storage pressure takes to matter.
+ */
+export const ORPHAN_GRACE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Deletes stored photos that no record refers to and that are old enough to be
+ * certain nobody is still working on them.
+ *
+ * This is the phone-side twin of the server's orphan sweeper (doc 09 §5) and it
+ * takes the same care: it deletes only what it can prove is both unreferenced
+ * and abandoned.
  *
  * @param referenced every local photo path currently held by a record
+ * @param now injectable for tests
  * @returns how many files were removed
  */
-export function sweepOrphanPhotos(referenced: Iterable<string>): number {
+export function sweepOrphanPhotos(referenced: Iterable<string>, now: number = Date.now()): number {
   const keep = new Set<string>();
   for (const uri of referenced) {
     if (uri) keep.add(uri);
@@ -164,10 +197,17 @@ export function sweepOrphanPhotos(referenced: Iterable<string>): number {
   let removed = 0;
   try {
     for (const entry of photoDirectory().list()) {
-      if (entry instanceof File && !keep.has(entry.uri)) {
-        entry.delete();
-        removed += 1;
-      }
+      if (!(entry instanceof File) || keep.has(entry.uri)) continue;
+
+      // A file whose age cannot be read is kept. Deleting an operator's
+      // photograph on the strength of an unparseable filename is the wrong way
+      // to resolve that doubt.
+      const capturedAt = Number(entry.name.split('-')[0]);
+      if (!Number.isFinite(capturedAt) || capturedAt <= 0) continue;
+      if (now - capturedAt < ORPHAN_GRACE_MS) continue;
+
+      entry.delete();
+      removed += 1;
     }
   } catch {
     // Sweeping is housekeeping. If the directory cannot be listed, the app
