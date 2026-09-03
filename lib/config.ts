@@ -39,3 +39,10 @@ export const APP_VERSION = Constants.expoConfig?.version ?? '0.0.0';
  * far better to say "no signal, saved locally" quickly (doc 03 §1).
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Photos are up to 1MB and share the link with everything else, so they get a
+ * longer leash than a JSON round trip. Still bounded: a stalled upload must
+ * eventually give the record back to the queue rather than hold the whole sync.
+ */
+export const PHOTO_TIMEOUT_MS = 60_000;

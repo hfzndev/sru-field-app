@@ -1,4 +1,5 @@
-import { API_URL, APP_VERSION, REQUEST_TIMEOUT_MS } from './config';
+import { File, UploadType } from 'expo-file-system';
+import { API_URL, APP_VERSION, PHOTO_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from './config';
 
 /**
  * Typed client for the field API (doc 06).
@@ -131,6 +132,90 @@ export function login(
 /** Ends the session server-side. Best-effort: logout must work offline too. */
 export function revoke(token: string): Promise<{ ok: boolean }> {
   return request<{ ok: boolean }>('/api/auth/revoke', { method: 'POST', token });
+}
+
+/* ------------------------------------------------------------------- photos */
+
+/**
+ * Uploads one photo and returns the path the server filed it under.
+ *
+ * Photos go up *before* the record that references them (doc 07 §2), so the
+ * path is already in hand when the record is pushed and no follow-up call is
+ * needed to complete it.
+ *
+ * Not routed through `request()`: this body is multipart, not JSON, and the
+ * Content-Type header must be left alone so the runtime can attach the
+ * boundary it generated.
+ */
+export async function uploadPhoto(token: string, localUri: string): Promise<{ path: string }> {
+  const file = new File(localUri);
+  if (!file.exists) {
+    // The file is gone — evicted, swept, or never written. Reported as a server
+    // refusal rather than as "offline", because retrying forever will not bring
+    // it back and the record needs to stop waiting on it.
+    throw new ApiError(0, 'PHOTO_MISSING', 'File foto tidak ditemukan di HP');
+  }
+
+  const controller = new AbortController();
+  // Photos are far larger than a sync payload and go over the same bad link, so
+  // they get their own, longer budget rather than the shared request timeout.
+  const timer = setTimeout(() => controller.abort(), PHOTO_TIMEOUT_MS);
+
+  let result: { status: number; body: string };
+  try {
+    // Not fetch + FormData: React Native's fetch no longer uploads the legacy
+    // `{uri, name, type}` shape, and fails in a way indistinguishable from
+    // having no signal. This streams the file from native code instead.
+    result = await file.upload(`${API_URL}/api/upload`, {
+      httpMethod: 'POST',
+      uploadType: UploadType.MULTIPART,
+      fieldName: 'file',
+      mimeType: 'image/jpeg',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+  } catch {
+    throw new OfflineError();
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let payload: any = null;
+  try {
+    payload = JSON.parse(result.body);
+  } catch {
+    payload = null;
+  }
+
+  if (result.status < 200 || result.status >= 300) {
+    const error = payload?.error;
+    throw new ApiError(
+      result.status,
+      error?.code ?? 'UNKNOWN',
+      error?.message ?? 'Foto gagal diunggah',
+      error?.details,
+    );
+  }
+
+  if (!payload?.path) {
+    throw new ApiError(result.status, 'UNKNOWN', 'Server tidak mengembalikan path foto');
+  }
+
+  return { path: payload.path };
+}
+
+/**
+ * Where to fetch a photo that lives on the server — one taken by another
+ * handset, or one this phone has already purged (doc 07 §5).
+ *
+ * The endpoint requires the device token, so callers must pass it as a header
+ * on the image request; the path alone is not enough to open it.
+ */
+export function photoSource(token: string, path: string): { uri: string; headers: Record<string, string> } {
+  return {
+    uri: `${API_URL}/api/photo?path=${encodeURIComponent(path)}`,
+    headers: { Authorization: `Bearer ${token}` },
+  };
 }
 
 /* --------------------------------------------------------------- sync/pull */

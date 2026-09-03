@@ -1,7 +1,9 @@
 import * as Network from 'expo-network';
-import { ApiError, OfflineError, pull as apiPull, sync as apiSync } from './api';
+import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto } from './api';
 import { getDb, getMetaNumber, setMeta } from './db';
-import { markError, markSynced, pendingReadings, runRetention } from './queue';
+import {
+  markError, markPhotoUploaded, markSynced, pendingPhotos, pendingReadings, runRetention,
+} from './queue';
 import { refreshUnsent } from './status';
 import { getToken } from './session';
 
@@ -20,6 +22,7 @@ import { getToken } from './session';
 export type SyncOutcome = {
   ok: boolean;
   offline: boolean;
+  photos: number;
   pushed: number;
   duplicates: number;
   rejected: number;
@@ -58,7 +61,7 @@ export function runSync(): Promise<SyncOutcome> {
 
 async function execute(): Promise<SyncOutcome> {
   const base: SyncOutcome = {
-    ok: false, offline: false, pushed: 0, duplicates: 0,
+    ok: false, offline: false, photos: 0, pushed: 0, duplicates: 0,
     rejected: 0, pulled: 0, purged: 0, message: '',
   };
 
@@ -69,7 +72,30 @@ async function execute(): Promise<SyncOutcome> {
     return { ...base, offline: true, message: 'Tidak ada koneksi — catatan tetap tersimpan di HP' };
   }
 
-  const readings = await pendingReadings();
+  // Photos first (doc 07 §2 step 2). The path has to be on the record before it
+  // is pushed, or the server stores a record pointing at nothing and there is
+  // no second call to complete it.
+  const photos = await pendingPhotos();
+  const blocked = new Set<string>();
+  let uploaded = 0;
+
+  for (const photo of photos) {
+    try {
+      const { path } = await uploadPhoto(token, photo.localUri);
+      await markPhotoUploaded(photo, path);
+      uploaded += 1;
+    } catch (err) {
+      // The record waits for the next cycle rather than going up without its
+      // photograph. A cleaning session whose evidence never arrives is worse
+      // than one that is still marked unsent — the second is visibly unfinished.
+      blocked.add(photo.clientId);
+      if (!(err instanceof OfflineError)) {
+        console.warn('photo upload failed:', err);
+      }
+    }
+  }
+
+  const readings = (await pendingReadings()).filter((r) => !blocked.has(r.clientId));
 
   let pushed = 0;
   let duplicates = 0;
@@ -137,18 +163,24 @@ async function execute(): Promise<SyncOutcome> {
   return {
     ok: true,
     offline: false,
+    photos: uploaded,
     pushed, duplicates, rejected, pulled, purged,
-    message: summarise(pushed, duplicates, rejected),
+    message: summarise(pushed, duplicates, rejected, blocked.size),
   };
 }
 
-function summarise(pushed: number, duplicates: number, rejected: number): string {
-  if (pushed === 0 && duplicates === 0 && rejected === 0) return 'Tidak ada yang perlu dikirim';
+function summarise(pushed: number, duplicates: number, rejected: number, waiting: number): string {
+  if (pushed === 0 && duplicates === 0 && rejected === 0 && waiting === 0) {
+    return 'Tidak ada yang perlu dikirim';
+  }
 
   const parts: string[] = [];
   if (pushed) parts.push(`${pushed} terkirim`);
   if (duplicates) parts.push(`${duplicates} sudah ada di server`);
   if (rejected) parts.push(`${rejected} ditolak`);
+  // Named rather than folded into "belum terkirim": the operator should know
+  // the hold-up is the photo, not the record.
+  if (waiting) parts.push(`${waiting} menunggu foto terkirim`);
   return parts.join(' · ');
 }
 

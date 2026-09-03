@@ -1,6 +1,7 @@
 import * as Crypto from 'expo-crypto';
 import { ReadingPayload } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
+import { sweepOrphanPhotos } from './photos';
 import { refreshUnsent } from './status';
 
 /**
@@ -85,6 +86,81 @@ export async function pendingReadings(): Promise<ReadingPayload[]> {
     ...(r.photo_path ? { photoPath: r.photo_path } : {}),
     readingAt: r.reading_at,
   }));
+}
+
+/* -------------------------------------------------------------------- photos
+
+   Every place a record can carry a photograph. Kept as data rather than spread
+   through the sync code so that adding one later is a single line here, and so
+   the retention sweep and the uploader can never disagree about where photos
+   live.                                                                       */
+
+export const PHOTO_COLUMNS: { table: FieldTable; local: string; remote: string }[] = [
+  { table: 'tank_readings', local: 'photo_local_uri', remote: 'photo_path' },
+  { table: 'cleaning_sessions', local: 'before_photo_local_uri', remote: 'before_photo' },
+  { table: 'cleaning_sessions', local: 'after_photo_local_uri', remote: 'after_photo' },
+];
+
+export type PendingPhoto = {
+  table: FieldTable;
+  clientId: string;
+  localUri: string;
+  remoteColumn: string;
+};
+
+/**
+ * Photos belonging to unsent records that have not been uploaded yet.
+ *
+ * "Not uploaded yet" is `local set, remote empty`. Once the server path is
+ * written the file stops being pending even though it is still on the phone —
+ * re-uploading would create a second copy on the server that nothing points at.
+ */
+export async function pendingPhotos(): Promise<PendingPhoto[]> {
+  const db = await getDb();
+  const out: PendingPhoto[] = [];
+
+  for (const column of PHOTO_COLUMNS) {
+    const rows = await db.getAllAsync<{ client_id: string; local: string }>(
+      `SELECT client_id, ${column.local} AS local FROM ${column.table}
+        WHERE sync_status != 'SYNCED'
+          AND ${column.local} != ''
+          AND ${column.remote} = ''`,
+    );
+    for (const row of rows) {
+      out.push({
+        table: column.table,
+        clientId: row.client_id,
+        localUri: row.local,
+        remoteColumn: column.remote,
+      });
+    }
+  }
+
+  return out;
+}
+
+/** Records the server path for an uploaded photo so the push can embed it. */
+export async function markPhotoUploaded(photo: PendingPhoto, serverPath: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE ${photo.table} SET ${photo.remoteColumn} = ? WHERE client_id = ?`,
+    serverPath, photo.clientId,
+  );
+}
+
+/** Every local photo path any record still refers to. Drives the orphan sweep. */
+export async function referencedPhotoUris(): Promise<string[]> {
+  const db = await getDb();
+  const uris: string[] = [];
+
+  for (const column of PHOTO_COLUMNS) {
+    const rows = await db.getAllAsync<{ local: string }>(
+      `SELECT ${column.local} AS local FROM ${column.table} WHERE ${column.local} != ''`,
+    );
+    for (const row of rows) uris.push(row.local);
+  }
+
+  return uris;
 }
 
 /** Which table a client_id belongs to, so acks can be applied generically. */
@@ -207,6 +283,13 @@ export async function runRetention(): Promise<number> {
     );
     removed += result.changes;
   }
+
+  // Deleting rows without deleting their files fills the phone with images
+  // nothing can display or explain. Sweeping afterwards — from what the tables
+  // still reference — also collects photos abandoned before their record was
+  // ever saved, and it reads the surviving rows, so the cleaning carve-out
+  // above automatically protects those sessions' BEFORE photos (doc 07 §5).
+  sweepOrphanPhotos(await referencedPhotoUris());
 
   return removed;
 }
