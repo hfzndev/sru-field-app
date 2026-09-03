@@ -75,6 +75,7 @@ export default function RootLayout() {
           headerLeft: ({ canGoBack }) => (canGoBack ? <HeaderBack /> : null),
         }}
       >
+        <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="shift-start" options={{ title: 'Mulai Shift', headerBackVisible: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

@@ -1,31 +1,62 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Field, Input, Screen } from '@/components/ui';
+import { Alert, Button, Field, Input, Loading, Screen } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
+import { getDb } from '@/lib/db';
 import { suggestShiftTime } from '@/lib/format';
+import { getSession, setShiftContext } from '@/lib/session';
 
 /**
  * "Mulai Shift" (doc 03 §3.1, steps 3–4).
  *
- * Every record captured from here on is attributed to this shift slot and this
- * operator, so it is asked once at the start rather than on every entry — the
- * whole point is that recording a reading takes seconds.
- *
- * The slot is suggested from the WIB clock but stays editable: someone clocking
- * on at 23:50 for the night shift would otherwise be labelled "sore".
+ * Asked once at the start rather than on every entry, because the whole point
+ * is that recording a reading takes seconds. Everything captured afterwards is
+ * attributed to this slot and this name.
  */
 const SLOTS = ['pagi', 'sore', 'malam'] as const;
 
 export default function ShiftStartScreen() {
   const [slot, setSlot] = useState<string>(suggestShiftTime());
   const [operator, setOperator] = useState('');
+  const [crew, setCrew] = useState<string[] | null>(null);
+  const [shiftName, setShiftName] = useState('');
+  const [error, setError] = useState('');
 
-  // Task 4 replaces this with the crew list from the login bootstrap.
-  const crew: string[] = [];
+  useEffect(() => {
+    let ignore = false;
+    (async () => {
+      const db = await getDb();
+      const rows = await db.getAllAsync<{ name: string }>(
+        'SELECT name FROM crew WHERE is_active = 1 ORDER BY sort_order, id',
+      );
+      const session = await getSession();
+      if (ignore) return;
+      setCrew(rows.map((r) => r.name));
+      setShiftName(session?.shiftName ?? '');
+    })();
+    return () => { ignore = true; };
+  }, []);
+
+  async function start() {
+    const name = operator.trim();
+    if (!name) return;
+    try {
+      await setShiftContext(slot, name);
+      router.replace('/(tabs)');
+    } catch {
+      setError('Gagal menyimpan data shift. Coba lagi.');
+    }
+  }
+
+  if (crew === null) return <Screen><Loading /></Screen>;
 
   return (
     <Screen>
+      {shiftName ? <Text style={styles.shift}>{shiftName}</Text> : null}
+
+      <Alert error={error} />
+
       <Field label="Waktu shift" hint="Disarankan dari jam sekarang — ubah bila perlu.">
         <View style={styles.row}>
           {SLOTS.map((value) => (
@@ -42,13 +73,32 @@ export default function ShiftStartScreen() {
 
       <Field
         label="Nama operator"
-        hint={crew.length ? 'Pilih dari daftar crew shift ini.' : 'Daftar crew belum diisi admin — ketik nama manual.'}
+        hint={crew.length
+          ? 'Pilih dari daftar crew shift ini, atau ketik nama lain.'
+          : 'Daftar crew belum diisi admin — ketik nama manual.'}
       >
+        {/* The roster is a shortcut, never a constraint: doc 01 §8 expects
+            operators to type a name until an admin fills the list in. */}
+        {crew.length > 0 && (
+          <View style={styles.crewWrap}>
+            {crew.map((name) => (
+              <View key={name} style={styles.crewCell}>
+                <Button
+                  title={name}
+                  variant={operator === name ? 'primary' : 'secondary'}
+                  onPress={() => setOperator(name)}
+                />
+              </View>
+            ))}
+          </View>
+        )}
         <Input
           value={operator}
           onChangeText={setOperator}
           placeholder="Contoh: Budi"
           autoCapitalize="words"
+          returnKeyType="go"
+          onSubmitEditing={start}
         />
       </Field>
 
@@ -57,7 +107,7 @@ export default function ShiftStartScreen() {
         variant="primary"
         size="big"
         disabled={!operator.trim()}
-        onPress={() => router.replace('/(tabs)')}
+        onPress={start}
       />
 
       <Text style={styles.note}>
@@ -68,7 +118,10 @@ export default function ShiftStartScreen() {
 }
 
 const styles = StyleSheet.create({
+  shift: { ...type.title, color: colors.text, marginBottom: space.md },
   row: { flexDirection: 'row', marginHorizontal: -space.xs },
   cell: { flex: 1, paddingHorizontal: space.xs },
+  crewWrap: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -space.xs, marginBottom: space.sm },
+  crewCell: { paddingHorizontal: space.xs, marginBottom: space.sm },
   note: { ...type.caption, color: colors.muted, textAlign: 'center', marginTop: space.lg },
 });

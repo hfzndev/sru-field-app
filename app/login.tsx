@@ -3,16 +3,16 @@ import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Alert, Button, Field, Input, Screen } from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
+import { ApiError, OfflineError, login as apiLogin } from '@/lib/api';
+import { API_URL } from '@/lib/config';
+import { deviceName, startSession } from '@/lib/session';
 
 /**
  * Shift login (doc 03 §3.1).
  *
- * The one screen that requires a connection: the account is verified against
- * the server and the response carries the whole bootstrap the phone needs for
- * the rest of the shift. Done once, in the control room, before walking out.
- *
- * Task 4 wires this to the API and SecureStore. For now it establishes the
- * layout and navigation.
+ * The one screen that needs a connection. It is done once, in the control room
+ * before walking out, and the response carries everything the phone needs for
+ * the rest of the shift — so this is also the last time signal is required.
  */
 const SHIFTS = ['shift_a', 'shift_b', 'shift_c', 'shift_d'] as const;
 const SHIFT_LABEL: Record<string, string> = {
@@ -22,7 +22,30 @@ const SHIFT_LABEL: Record<string, string> = {
 export default function LoginScreen() {
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState('');
-  const [error] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setError('');
+    setBusy(true);
+    try {
+      const name = await deviceName();
+      const bootstrap = await apiLogin(username, password, name);
+      await startSession(bootstrap);
+      router.replace('/shift-start');
+    } catch (err) {
+      // Offline is worth distinguishing: nothing the operator typed is wrong,
+      // they just need to stand somewhere with signal.
+      if (err instanceof OfflineError) {
+        setError('Tidak ada koneksi. Login perlu sinyal — coba di control room.');
+      } else if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError('Gagal masuk. Coba lagi.');
+      }
+      setBusy(false);
+    }
+  }
 
   return (
     <Screen>
@@ -41,6 +64,7 @@ export default function LoginScreen() {
                 title={SHIFT_LABEL[code]}
                 variant={username === code ? 'primary' : 'secondary'}
                 onPress={() => setUsername(code)}
+                disabled={busy}
               />
             </View>
           ))}
@@ -54,7 +78,9 @@ export default function LoginScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          textContentType="password"
+          editable={!busy}
+          onSubmitEditing={() => { if (username && password && !busy) submit(); }}
+          returnKeyType="go"
         />
       </Field>
 
@@ -62,13 +88,15 @@ export default function LoginScreen() {
         title="Masuk"
         variant="primary"
         size="big"
+        busy={busy}
         disabled={!username || !password}
-        onPress={() => router.replace('/shift-start')}
+        onPress={submit}
       />
 
       <Text style={styles.note}>
         Login perlu sinyal. Setelah masuk, semua pencatatan bisa dilakukan tanpa koneksi.
       </Text>
+      <Text style={styles.server}>{API_URL}</Text>
     </Screen>
   );
 }
@@ -80,4 +108,7 @@ const styles = StyleSheet.create({
   shiftGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -space.xs },
   shiftCell: { width: '50%', paddingHorizontal: space.xs, marginBottom: space.sm },
   note: { ...type.caption, color: colors.muted, textAlign: 'center', marginTop: space.lg },
+  // Shown so a misconfigured build is obvious from the login screen rather than
+  // presenting as "wrong password" against a server nobody meant to use.
+  server: { ...type.caption, color: colors.faint, textAlign: 'center', marginTop: space.xs },
 });
