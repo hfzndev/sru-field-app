@@ -7,9 +7,9 @@ Built against `../sru-field-docs` (v1.2) and the API in `../sru-field-api`. The
 documents are the source of truth; where this code and those documents disagree,
 the documents win.
 
-Phase 2 scope is **login, the midband calculator, and the sync engine**.
-Activities and cleaning arrive in Phase 3, maintenance and in-app APK update in
-Phase 4 (doc 01 §9).
+Phases 2 and 3 are in: **login, the midband calculator, the sync engine,
+activities, cleaning documentation with photos, and the end-of-shift summary**.
+Maintenance and in-app APK update arrive in Phase 4 (doc 01 §9).
 
 ## Requirements
 
