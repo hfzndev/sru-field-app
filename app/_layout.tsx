@@ -80,6 +80,7 @@ export default function RootLayout() {
         <Stack.Screen name="shift-start" options={{ title: 'Mulai Shift', headerBackVisible: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ title: 'Pengaturan' }} />
+        <Stack.Screen name="summary" options={{ title: 'Rangkuman Shift' }} />
         {/* Full bleed: a viewfinder with a navigation bar over it wastes the
             part of the screen the operator is actually aiming. */}
         <Stack.Screen name="camera" options={{ headerShown: false }} />

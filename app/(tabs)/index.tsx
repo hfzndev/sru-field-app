@@ -86,6 +86,14 @@ export default function DashboardScreen() {
         size="big"
         onPress={() => router.push('/(tabs)/tanks')}
       />
+
+      {/* The handover document (doc 02 §4). Kept on the dashboard because that
+          is where an operator lands when the shift is ending. */}
+      <Button
+        title="Rangkuman shift"
+        variant="secondary"
+        onPress={() => router.push('/summary')}
+      />
     </Screen>
   );
 }

@@ -394,6 +394,117 @@ export async function getCleaning(clientId: string): Promise<CleaningRow | null>
   return rows.find((r) => r.clientId === clientId) ?? null;
 }
 
+/* ------------------------------------------------------------ shift summary */
+
+export type SummaryEntry = {
+  key: string;
+  at: string;
+  kind: 'READING' | 'ACTIVITY' | 'CLEANING';
+  title: string;
+  detail: string;
+  operatorName: string;
+  unsent: boolean;
+};
+
+export type ShiftSummary = {
+  entries: SummaryEntry[];
+  readings: number;
+  activities: number;
+  cleaning: number;
+  unfinishedCleaning: number;
+};
+
+/**
+ * Everything this shift recorded, in the order it happened (doc 02 §4).
+ *
+ * This is the screen an operator writes the control-room handover from, which
+ * is why it draws on the whole shift rather than this handset alone — the pull
+ * window fills in what the other two phones did (doc 07 §5). A summary showing
+ * a third of the shift, with nothing to say the rest existed, would be worse
+ * than no summary at all.
+ *
+ * The window is the last twelve hours rather than "since midnight" because the
+ * malam shift crosses midnight, and a handover that loses everything before
+ * 00:00 loses most of the night.
+ */
+export async function shiftSummary(shiftGroup: string, shiftTime: string): Promise<ShiftSummary> {
+  const db = await getDb();
+  const since = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+
+  const readings = await db.getAllAsync<any>(
+    `SELECT r.client_id, r.level_mm, r.deviation_mm, r.reading_at, r.operator_name,
+            r.sync_status, r.note, t.code AS tank_code
+       FROM tank_readings r
+       LEFT JOIN tanks t ON t.id = r.tank_id
+      WHERE r.shift_group = ? AND r.shift_time = ? AND r.reading_at >= ?`,
+    shiftGroup, shiftTime, since,
+  );
+
+  const activities = await db.getAllAsync<any>(
+    `SELECT client_id, type, description, contractor_name, unit_area, activity_at,
+            operator_name, sync_status
+       FROM activity_logs
+      WHERE shift_group = ? AND shift_time = ? AND activity_at >= ?`,
+    shiftGroup, shiftTime, since,
+  );
+
+  const cleaning = await db.getAllAsync<any>(
+    `SELECT client_id, location, status, note, before_photo_at, created_at,
+            operator_name, sync_status
+       FROM cleaning_sessions
+      WHERE shift_group = ? AND shift_time = ? AND created_at >= ?`,
+    shiftGroup, shiftTime, since,
+  );
+
+  const entries: SummaryEntry[] = [
+    ...readings.map((r) => ({
+      key: `r:${r.client_id}`,
+      at: r.reading_at,
+      kind: 'READING' as const,
+      // Full tank code, never abbreviated (doc 02 §1.1).
+      title: `${r.tank_code ?? 'Tangki'} — ${Number(r.level_mm).toLocaleString('id-ID')} mm`,
+      detail: [
+        r.deviation_mm === null ? '' : `selisih DCS ${r.deviation_mm > 0 ? '+' : ''}${r.deviation_mm} mm`,
+        r.note,
+      ].filter(Boolean).join(' · '),
+      operatorName: r.operator_name,
+      unsent: r.sync_status !== 'SYNCED',
+    })),
+    ...activities.map((a) => ({
+      key: `a:${a.client_id}`,
+      at: a.activity_at,
+      kind: 'ACTIVITY' as const,
+      title: a.description,
+      detail: [
+        a.type === 'KONTRAKTOR' ? (a.contractor_name || 'Kontraktor') : 'Operator',
+        a.unit_area,
+      ].filter(Boolean).join(' · '),
+      operatorName: a.operator_name,
+      unsent: a.sync_status !== 'SYNCED',
+    })),
+    ...cleaning.map((c) => ({
+      key: `c:${c.client_id}`,
+      at: c.before_photo_at ?? c.created_at,
+      kind: 'CLEANING' as const,
+      title: c.location,
+      detail: [
+        c.status === 'DONE' ? 'selesai' : 'belum selesai',
+        c.note,
+      ].filter(Boolean).join(' · '),
+      operatorName: c.operator_name,
+      unsent: c.sync_status !== 'SYNCED',
+    })),
+  ].sort((a, b) => a.at.localeCompare(b.at));
+
+  return {
+    entries,
+    readings: readings.length,
+    activities: activities.length,
+    cleaning: cleaning.length,
+    unfinishedCleaning: cleaning.filter((c) => c.status !== 'DONE').length,
+  };
+}
+
 /** Which table a client_id belongs to, so acks can be applied generically. */
 async function tableForClientId(clientId: string): Promise<FieldTable | null> {
   const db = await getDb();
