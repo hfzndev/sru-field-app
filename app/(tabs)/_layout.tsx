@@ -9,9 +9,12 @@ import { useUnsent } from '@/lib/status';
 /**
  * Bottom tabs.
  *
- * Only the Phase 2 scope is here: Beranda, Tangki and Sync. Aktivitas and
- * Bersih-bersih arrive in Phase 3, Maintenance in Phase 4. Showing them now as
- * dead tabs would train operators to ignore parts of the bar.
+ * Beranda, Tangki, Aktivitas, Bersih-bersih and Sync. Maintenance arrives in
+ * Phase 4 and will make six, which is more than fits a phone bar at this label
+ * size — that is the point to re-cut the navigation, not now.
+ *
+ * A tab is added only once it leads somewhere real. Dead tabs train operators
+ * to ignore parts of the bar.
  */
 function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
   return <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
@@ -90,6 +93,10 @@ export default function TabsLayout() {
       <Tabs.Screen
         name="tanks"
         options={{ title: 'Tangki', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🛢️" color={color} /> }}
+      />
+      <Tabs.Screen
+        name="activities"
+        options={{ title: 'Aktivitas', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="📝" color={color} /> }}
       />
       <Tabs.Screen
         name="sync"

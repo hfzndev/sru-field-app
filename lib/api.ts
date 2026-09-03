@@ -235,10 +235,22 @@ export type ReadingPayload = {
   readingAt: string;
 };
 
+export type ActivityPayload = {
+  clientId: string;
+  type: 'OPERATOR' | 'KONTRAKTOR';
+  description: string;
+  contractorName: string;
+  unitArea: string;
+  activityAt: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
 export type SyncPayload = {
   readings?: ReadingPayload[];
+  activities?: ActivityPayload[];
   cleaning?: unknown[];
-  activities?: unknown[];
   taskLogs?: unknown[];
 };
 
