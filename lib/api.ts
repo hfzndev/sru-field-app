@@ -294,6 +294,43 @@ export type RecentReading = {
   receivedAt: string;
 };
 
+/**
+ * The shift's own records from the last seven days, as the server holds them.
+ *
+ * Three handsets share a shift, so this is most of what any one of them knows.
+ * A device that stored only its own work would show a third of the shift in the
+ * summary and give no sign that the rest existed.
+ */
+export type RecentActivity = {
+  id: number;
+  clientId: string;
+  type: string;
+  description: string;
+  contractorName: string;
+  unitArea: string;
+  activityAt: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  receivedAt: string;
+};
+
+export type RecentCleaning = {
+  id: number;
+  clientId: string;
+  location: string;
+  note: string;
+  status: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  beforePhoto: string;
+  beforePhotoAt: string | null;
+  afterPhoto: string;
+  afterPhotoAt: string | null;
+  receivedAt: string;
+};
+
 export type PullResponse = {
   dataVersion: number;
   master: {
@@ -305,8 +342,8 @@ export type PullResponse = {
   };
   recent: {
     readings: RecentReading[];
-    activities: unknown[];
-    cleaning: unknown[];
+    activities: RecentActivity[];
+    cleaning: RecentCleaning[];
     taskLogs: unknown[];
   };
   serverTime: string;

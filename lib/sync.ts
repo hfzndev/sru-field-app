@@ -276,6 +276,41 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
       rows += 1;
     }
 
+    // Same ON CONFLICT DO NOTHING rule as readings, and for the same reason:
+    // a client_id already here belongs to a record this device created, which
+    // may still be PENDING or carry a rejection the operator has yet to fix.
+    for (const a of recent.activities ?? []) {
+      await txn.runAsync(
+        `INSERT INTO activity_logs
+           (client_id, type, description, contractor_name, unit_area, activity_at,
+            operator_name, shift_group, shift_time, sync_status, server_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+         ON CONFLICT(client_id) DO NOTHING`,
+        a.clientId, a.type, a.description, a.contractorName, a.unitArea, a.activityAt,
+        a.operatorName, a.shiftGroup, a.shiftTime, a.id, a.receivedAt ?? a.activityAt,
+      );
+      rows += 1;
+    }
+
+    // Cleaning carries no local photo paths here on purpose. These rows describe
+    // sessions from the other handsets; their photographs live on the server and
+    // are fetched when online (doc 07 §5). Writing a local uri we do not have
+    // would make the retention sweep think a file went missing.
+    for (const c of recent.cleaning ?? []) {
+      await txn.runAsync(
+        `INSERT INTO cleaning_sessions
+           (client_id, location, note, status, operator_name, shift_group, shift_time,
+            before_photo, before_photo_at, after_photo, after_photo_at,
+            sync_status, server_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+         ON CONFLICT(client_id) DO NOTHING`,
+        c.clientId, c.location, c.note, c.status, c.operatorName, c.shiftGroup, c.shiftTime,
+        c.beforePhoto, c.beforePhotoAt, c.afterPhoto, c.afterPhotoAt,
+        c.id, c.receivedAt ?? c.beforePhotoAt,
+      );
+      rows += 1;
+    }
+
     // The deviation cache is rebuilt from what the server returned, so the tape
     // suggestion reflects readings taken on the other handsets too — three
     // phones share a shift, and drift is a property of the tank, not the device.
