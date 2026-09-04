@@ -7,11 +7,14 @@ import { runSync } from '@/lib/sync';
 import { useUnsent } from '@/lib/status';
 
 /**
- * Bottom tabs.
+ * Bottom tabs: Beranda, Tangki, Aktivitas, Bersih-bersih, Servis.
  *
- * Beranda, Tangki, Aktivitas, Bersih-bersih and Sync. Maintenance arrives in
- * Phase 4 and will make six, which is more than fits a phone bar at this label
- * size — that is the point to re-cut the navigation, not now.
+ * Phase 4 brought equipment, and six tabs do not fit a phone bar at a 16pt
+ * label. Sync gave up its place rather than any record type: it is the only one
+ * that is not a thing the operator records, it already runs by itself on open
+ * and whenever the connection returns, and the two ways in that remain — the
+ * unsent badge in the header, and the button on Beranda — are both closer to
+ * where an operator actually notices something is unsent.
  *
  * A tab is added only once it leads somewhere real. Dead tabs train operators
  * to ignore parts of the bar.
@@ -26,22 +29,34 @@ function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
  * Hidden at zero rather than shown as "0": a permanent badge becomes furniture
  * and stops being read, and the whole point is that it is noticed on the day it
  * is not zero.
+ *
+ * It is the way into Sync now that Sync has no tab. That is the right pairing:
+ * the moment an operator wants to send is the moment they notice this number,
+ * and tapping the thing you just noticed beats hunting the bar for it.
  */
 function UnsentBadge() {
   const unsent = useUnsent();
   if (unsent === 0) return null;
   return (
-    <View style={{
-      backgroundColor: colors.warnSoft,
-      paddingHorizontal: space.md,
-      paddingVertical: 4,
-      borderRadius: 999,
-      marginRight: space.xs,
-    }}>
-      <Text style={{ color: colors.warn, fontWeight: '700', fontSize: 15 }}>
-        ⬆ {unsent}
-      </Text>
-    </View>
+    <Link href="/(tabs)/sync" asChild>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${unsent} catatan belum terkirim — buka Sync`}
+        hitSlop={8}
+        style={{
+          minHeight: TOUCH_TARGET,
+          justifyContent: 'center',
+          backgroundColor: colors.warnSoft,
+          paddingHorizontal: space.md,
+          borderRadius: 999,
+          marginRight: space.xs,
+        }}
+      >
+        <Text style={{ color: colors.warn, fontWeight: '700', fontSize: 15 }}>
+          ⬆ {unsent}
+        </Text>
+      </Pressable>
+    </Link>
   );
 }
 
@@ -103,9 +118,16 @@ export default function TabsLayout() {
         options={{ title: 'Bersih', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🧹" color={color} /> }}
       />
       <Tabs.Screen
-        name="sync"
-        options={{ title: 'Sync', tabBarIcon: ({ color }) => <TabIcon glyph="🔄" color={color} /> }}
+        name="maintenance"
+        // Short on purpose: at the 16pt label floor with five tabs, anything
+        // longer truncates mid-word ("Mainte…", "Perawa…"). Same trade the
+        // Bersih tab already makes.
+        options={{ title: 'Servis', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🔧" color={color} /> }}
       />
+      {/* Still a route, no longer a tab — reached from the header badge and
+          from Beranda. href: null keeps it navigable while taking it out of
+          the bar. */}
+      <Tabs.Screen name="sync" options={{ title: 'Sync', href: null }} />
     </Tabs>
   );
 }

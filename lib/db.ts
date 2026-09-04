@@ -202,6 +202,38 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    // Phase 4: equipment status may now be changed from the handset (doc 05 §3).
+    version: 2,
+    sql: `
+      -- The reason travels with the status. A screen that says "ON REPAIR" and
+      -- nothing else withholds the one thing the next shift needs (doc 02 §1.2).
+      ALTER TABLE equipment ADD COLUMN status_note TEXT NOT NULL DEFAULT '';
+      ALTER TABLE equipment ADD COLUMN status_changed_by TEXT NOT NULL DEFAULT '';
+      ALTER TABLE equipment ADD COLUMN status_changed_at TEXT;
+
+      -- A status change is queued like any other field record: the operator is
+      -- standing at the equipment with no signal when they find the fault.
+      CREATE TABLE IF NOT EXISTS equipment_status_logs (
+        client_id TEXT PRIMARY KEY NOT NULL,
+        equipment_id INTEGER NOT NULL,
+        old_status TEXT NOT NULL DEFAULT '',   -- local display only; the server re-reads it
+        new_status TEXT NOT NULL,
+        description TEXT NOT NULL,
+        changed_at TEXT NOT NULL,
+        operator_name TEXT NOT NULL,
+        shift_group TEXT NOT NULL DEFAULT '',
+        shift_time TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'PENDING_SYNC',
+        server_id INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_eqstatus_status ON equipment_status_logs(sync_status);
+      CREATE INDEX IF NOT EXISTS idx_eqstatus_equipment ON equipment_status_logs(equipment_id, changed_at DESC);
+    `,
+  },
 ];
 
 /** Every table holding operator input. The sync engine iterates this. */
@@ -210,6 +242,7 @@ export const FIELD_TABLES = [
   'activity_logs',
   'cleaning_sessions',
   'maintenance_task_logs',
+  'equipment_status_logs',
 ] as const;
 
 export const MASTER_TABLES = ['tanks', 'equipment', 'contractors', 'crew', 'tasks'] as const;

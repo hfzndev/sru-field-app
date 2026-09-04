@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
-import { ActivityPayload, CleaningPayload, ReadingPayload } from './api';
+import { STATUS_LABEL } from '@/constants/theme';
+import { ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
 import { deletePhoto, sweepOrphanPhotos } from './photos';
 import { refreshUnsent } from './status';
@@ -394,12 +395,215 @@ export async function getCleaning(clientId: string): Promise<CleaningRow | null>
   return rows.find((r) => r.clientId === clientId) ?? null;
 }
 
+/* --------------------------------------------------------- equipment status */
+
+export const EQUIPMENT_STATUSES = ['NORMAL', 'STANDBY', 'ON_REPAIR', 'NEED_REPAIR'] as const;
+export type EquipmentStatus = (typeof EQUIPMENT_STATUSES)[number];
+
+export type EquipmentRow = {
+  id: number;
+  tagNumber: string;
+  name: string;
+  unitKey: string;
+  location: string;
+  status: string;
+  statusNote: string;
+  statusChangedBy: string;
+  statusChangedAt: string | null;
+  /** A queued change on this handset that the server has not confirmed yet. */
+  pendingStatus: string | null;
+};
+
+/**
+ * The equipment list, with any unsent change folded in.
+ *
+ * `pendingStatus` matters more than it looks: an operator who reports a fault
+ * with no signal and then reopens the screen must see their own report, not the
+ * status the server last knew. Without it the app appears to have discarded the
+ * report, and the operator writes it again.
+ */
+export async function listEquipment(): Promise<EquipmentRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT e.*, (
+       SELECT l.new_status FROM equipment_status_logs l
+        WHERE l.equipment_id = e.id AND l.sync_status != 'SYNCED'
+        ORDER BY l.changed_at DESC, l.rowid DESC LIMIT 1
+     ) AS pending_status
+       FROM equipment e
+      WHERE e.is_active = 1
+      ORDER BY e.tag_number`,
+  );
+
+  return rows.map((e) => ({
+    id: e.id,
+    tagNumber: e.tag_number,
+    name: e.name ?? '',
+    unitKey: e.unit_key ?? '',
+    location: e.location ?? '',
+    status: e.status,
+    statusNote: e.status_note ?? '',
+    statusChangedBy: e.status_changed_by ?? '',
+    statusChangedAt: e.status_changed_at ?? null,
+    pendingStatus: e.pending_status ?? null,
+  }));
+}
+
+export async function getEquipment(id: number): Promise<EquipmentRow | null> {
+  const all = await listEquipment();
+  return all.find((e) => e.id === id) ?? null;
+}
+
+export type EquipmentStatusRow = {
+  clientId: string;
+  equipmentId: number;
+  oldStatus: string;
+  newStatus: string;
+  description: string;
+  changedAt: string;
+  operatorName: string;
+  shiftTime: string;
+  syncStatus: string;
+};
+
+/** The status history this handset knows about for one piece of equipment. */
+export async function listEquipmentStatus(equipmentId: number, limit = 50): Promise<EquipmentStatusRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM equipment_status_logs WHERE equipment_id = ?
+      ORDER BY changed_at DESC, rowid DESC LIMIT ?`,
+    equipmentId, limit,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    equipmentId: r.equipment_id,
+    oldStatus: r.old_status ?? '',
+    newStatus: r.new_status,
+    description: r.description,
+    changedAt: r.changed_at,
+    operatorName: r.operator_name,
+    shiftTime: r.shift_time,
+    syncStatus: r.sync_status,
+  }));
+}
+
+export type QueuedEquipmentStatus = {
+  equipmentId: number;
+  newStatus: EquipmentStatus;
+  description: string;
+  changedAt: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/**
+ * Queues a status change and moves the cached master row to match.
+ *
+ * The local master row is written optimistically because the operator is
+ * looking at the equipment they just reported on; leaving it showing NORMAL
+ * until the next sync would read as the app having ignored them. The server
+ * still decides — the next pull overwrites this row either way.
+ */
+export async function enqueueEquipmentStatus(change: QueuedEquipmentStatus): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+  const current = await db.getFirstAsync<{ status: string }>(
+    'SELECT status FROM equipment WHERE id = ?', change.equipmentId,
+  );
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO equipment_status_logs
+         (client_id, equipment_id, old_status, new_status, description, changed_at,
+          operator_name, shift_group, shift_time, sync_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_SYNC', ?)`,
+      clientId, change.equipmentId, current?.status ?? '', change.newStatus,
+      change.description, change.changedAt, change.operatorName,
+      change.shiftGroup, change.shiftTime, new Date().toISOString(),
+    );
+
+    await db.runAsync(
+      `UPDATE equipment
+          SET status = ?, status_note = ?, status_changed_by = ?, status_changed_at = ?
+        WHERE id = ?`,
+      change.newStatus, change.description, change.operatorName, change.changedAt,
+      change.equipmentId,
+    );
+  });
+
+  await refreshUnsent();
+  return clientId;
+}
+
+/** Status changes waiting to go, oldest first. Includes SYNC_ERROR — see pendingReadings. */
+export async function pendingEquipmentStatus(): Promise<EquipmentStatusPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM equipment_status_logs WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    equipmentId: r.equipment_id,
+    newStatus: r.new_status,
+    description: r.description,
+    changedAt: r.changed_at,
+    operatorName: r.operator_name,
+    shiftGroup: r.shift_group,
+    shiftTime: r.shift_time,
+  }));
+}
+
+/* -------------------------------------------------------- maintenance tasks */
+
+export type TaskRow = {
+  id: number;
+  equipmentId: number | null;
+  equipmentTag: string;
+  equipmentName: string;
+  title: string;
+  description: string;
+  status: string;
+  progressPct: number;
+  dueDate: string | null;
+};
+
+/**
+ * Tasks from the master cache, unfinished first.
+ *
+ * Read-only on the phone: tasks are created by an admin and travel down with
+ * the pull (doc 07 §7). What the operator adds is progress, which is a separate
+ * record type entirely.
+ */
+export async function listTasks(): Promise<TaskRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM tasks
+      ORDER BY CASE status WHEN 'IN_PROGRESS' THEN 0 WHEN 'OPEN' THEN 1 ELSE 2 END,
+               COALESCE(due_date, '9999'), id`,
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    equipmentId: r.equipment_id ?? null,
+    equipmentTag: r.equipment_tag ?? '',
+    equipmentName: r.equipment_name ?? '',
+    title: r.title,
+    description: r.description ?? '',
+    status: r.status,
+    progressPct: r.progress_pct ?? 0,
+    dueDate: r.due_date ?? null,
+  }));
+}
+
 /* ------------------------------------------------------------ shift summary */
 
 export type SummaryEntry = {
   key: string;
   at: string;
-  kind: 'READING' | 'ACTIVITY' | 'CLEANING';
+  kind: 'READING' | 'ACTIVITY' | 'CLEANING' | 'EQUIPMENT';
   title: string;
   detail: string;
   operatorName: string;
@@ -412,6 +616,7 @@ export type ShiftSummary = {
   activities: number;
   cleaning: number;
   unfinishedCleaning: number;
+  equipmentChanges: number;
 };
 
 /**
@@ -456,6 +661,17 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
     shiftGroup, shiftTime, since,
   );
 
+  // A pump that went to NEED_REPAIR mid-shift is exactly what the handover is
+  // for, so status changes sit in the same timeline as everything else.
+  const equipmentChanges = await db.getAllAsync<any>(
+    `SELECT l.client_id, l.old_status, l.new_status, l.description, l.changed_at,
+            l.operator_name, l.sync_status, e.tag_number
+       FROM equipment_status_logs l
+       LEFT JOIN equipment e ON e.id = l.equipment_id
+      WHERE l.shift_group = ? AND l.shift_time = ? AND l.changed_at >= ?`,
+    shiftGroup, shiftTime, since,
+  );
+
   const entries: SummaryEntry[] = [
     ...readings.map((r) => ({
       key: `r:${r.client_id}`,
@@ -494,6 +710,19 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
       operatorName: c.operator_name,
       unsent: c.sync_status !== 'SYNCED',
     })),
+    ...equipmentChanges.map((s) => ({
+      key: `e:${s.client_id}`,
+      at: s.changed_at,
+      kind: 'EQUIPMENT' as const,
+      // The tag is never abbreviated, same rule as tank codes (doc 02 §1.1).
+      title: `${s.tag_number ?? 'Equipment'} → ${STATUS_LABEL[s.new_status] ?? s.new_status}`,
+      detail: [
+        s.old_status ? `dari ${STATUS_LABEL[s.old_status] ?? s.old_status}` : '',
+        s.description,
+      ].filter(Boolean).join(' · '),
+      operatorName: s.operator_name,
+      unsent: s.sync_status !== 'SYNCED',
+    })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
   return {
@@ -502,6 +731,7 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
     activities: activities.length,
     cleaning: cleaning.length,
     unfinishedCleaning: cleaning.filter((c) => c.status !== 'DONE').length,
+    equipmentChanges: equipmentChanges.length,
   };
 }
 

@@ -69,6 +69,16 @@ export default function SyncScreen() {
           />
         )}
 
+        {/* Push and pull fail independently. Saying only "terkirim" while the
+            pull half is broken hides the fact that this phone has stopped
+            receiving master data — a new tank, or a pump another shift put on
+            repair. */}
+        {!!outcome?.pullError && (
+          <Text style={styles.warn}>
+            Catatan terkirim, tapi data dari server gagal diambil: {outcome.pullError}
+          </Text>
+        )}
+
         <Card>
           <View style={styles.badgeRow}>
             <Chip

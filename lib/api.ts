@@ -87,7 +87,15 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 /* ------------------------------------------------------------------- types */
 
 export type TankDto = { id: number; code: string; name?: string; heightMm: number; dcsTag?: string };
-export type EquipmentDto = { id: number; tagNumber: string; name: string; status: string };
+export type EquipmentDto = {
+  id: number; tagNumber: string; name: string; status: string;
+  unitKey?: string;
+  location?: string;
+  /** The latest reason, from whichever shift wrote it — see doc 06 §5. */
+  statusNote?: string;
+  statusChangedBy?: string;
+  statusChangedAt?: string | null;
+};
 export type ContractorDto = { id: number; name: string };
 export type TaskDto = {
   id: number; equipmentId: number; equipmentTag?: string; equipmentName?: string;
@@ -260,11 +268,29 @@ export type CleaningPayload = {
   shiftTime: string;
 };
 
+/**
+ * A status change raised in the field (doc 06 §5).
+ *
+ * No oldStatus: the server reads it from the row when the record lands, because
+ * a handset that has been offline for days holds a stale answer.
+ */
+export type EquipmentStatusPayload = {
+  clientId: string;
+  equipmentId: number;
+  newStatus: string;
+  description: string;
+  changedAt: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
 export type SyncPayload = {
   readings?: ReadingPayload[];
   activities?: ActivityPayload[];
   cleaning?: CleaningPayload[];
   taskLogs?: unknown[];
+  equipmentStatus?: EquipmentStatusPayload[];
 };
 
 export type SyncAck = {
@@ -272,6 +298,12 @@ export type SyncAck = {
   serverId: number;
   /** Set when the server updated an existing cleaning session rather than inserting (doc 07 §4). */
   updated?: boolean;
+  /**
+   * False when the equipment already carried the status reported. The change is
+   * still recorded — the description has value either way — but the phone says
+   * so rather than implying the equipment moved (doc 06 §5).
+   */
+  statusChanged?: boolean;
   levelMm?: number;
   deviationMm?: number | null;
 };
@@ -357,6 +389,21 @@ export type RecentCleaning = {
   receivedAt: string;
 };
 
+/** This shift's own status changes from the server's 7-day window (doc 06 §5). */
+export type RecentEquipmentStatus = {
+  id: number;
+  clientId: string | null;
+  equipmentId: number;
+  oldStatus: string | null;
+  newStatus: string;
+  description: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  changedAt: string;
+  receivedAt: string;
+};
+
 export type PullResponse = {
   dataVersion: number;
   master: {
@@ -371,6 +418,7 @@ export type PullResponse = {
     activities: RecentActivity[];
     cleaning: RecentCleaning[];
     taskLogs: unknown[];
+    equipmentStatus?: RecentEquipmentStatus[];
   };
   serverTime: string;
 };

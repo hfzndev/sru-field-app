@@ -87,6 +87,15 @@ export default function DashboardScreen() {
         onPress={() => router.push('/(tabs)/tanks')}
       />
 
+      {/* Sync has no tab (see the tabs layout). The header badge covers the
+          case where something is queued; this covers the other one — pulling
+          master changes down when nothing is waiting to go up. */}
+      <Button
+        title="Sync sekarang"
+        variant="secondary"
+        onPress={() => router.push('/(tabs)/sync')}
+      />
+
       {/* The handover document (doc 02 §4). Kept on the dashboard because that
           is where an operator lands when the shift is ending. */}
       <Button

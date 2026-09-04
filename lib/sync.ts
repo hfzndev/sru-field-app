@@ -3,6 +3,7 @@ import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto }
 import { getDb, getMetaNumber, setMeta } from './db';
 import {
   markError, markPhotoUploaded, markSynced, pendingActivities, pendingCleaning,
+  pendingEquipmentStatus,
   pendingPhotos, pendingReadings, runRetention,
 } from './queue';
 import { refreshUnsent } from './status';
@@ -30,6 +31,17 @@ export type SyncOutcome = {
   pulled: number;
   purged: number;
   message: string;
+  /**
+   * Why the pull half failed, when it did.
+   *
+   * Push and pull fail independently, and a failed pull used to be a
+   * console.warn and nothing else. That is the worst shape this bug can take:
+   * records keep going up, so every visible signal says the app is fine, while
+   * master data quietly stops arriving — a tank an admin added, a piece of
+   * equipment another shift put on repair. It is not an error for the push, so
+   * it does not clear `ok`; it is shown alongside.
+   */
+  pullError?: string;
 };
 
 let inFlight: Promise<SyncOutcome> | null = null;
@@ -99,14 +111,17 @@ async function execute(): Promise<SyncOutcome> {
   const readings = (await pendingReadings()).filter((r) => !blocked.has(r.clientId));
   const activities = (await pendingActivities()).filter((a) => !blocked.has(a.clientId));
   const cleaning = (await pendingCleaning()).filter((c) => !blocked.has(c.clientId));
+  // No photo on a status change, so nothing can hold one back.
+  const equipmentStatus = await pendingEquipmentStatus();
 
   let pushed = 0;
   let duplicates = 0;
   let rejected = 0;
 
-  if (readings.length > 0 || activities.length > 0 || cleaning.length > 0) {
+  if (readings.length > 0 || activities.length > 0 || cleaning.length > 0
+      || equipmentStatus.length > 0) {
     try {
-      const response = await apiSync(token, { readings, activities, cleaning });
+      const response = await apiSync(token, { readings, activities, cleaning, equipmentStatus });
 
       // Acks are applied one at a time. If the app dies partway through, the
       // records already marked stay marked and the rest are simply retried —
@@ -146,15 +161,20 @@ async function execute(): Promise<SyncOutcome> {
   // Pull runs even when there was nothing to push: master data changes on the
   // admin side and the phone needs it regardless.
   let pulled = 0;
+  let pullError: string | undefined;
   try {
     const since = await getMetaNumber('dataVersion', 0);
     const response = await apiPull(token, since);
     pulled = await applyPull(response);
+    // Only after applyPull returns. Advancing the cursor past rows that failed
+    // to land would make them invisible forever — the next pull would ask for
+    // changes newer than data this phone never received.
     await setMeta('dataVersion', String(response.dataVersion));
   } catch (err) {
+    // Offline is the normal case out in the plant and says nothing new: the
+    // push already reported it.
     if (!(err instanceof OfflineError)) {
-      // A failed pull is not a failed sync — the push already landed, which is
-      // the half that matters.
+      pullError = err instanceof Error ? err.message : String(err);
       console.warn('pull failed:', err);
     }
   }
@@ -167,7 +187,7 @@ async function execute(): Promise<SyncOutcome> {
     ok: true,
     offline: false,
     photos: uploaded,
-    pushed, duplicates, rejected, pulled, purged,
+    pushed, duplicates, rejected, pulled, purged, pullError,
     message: summarise(pushed, duplicates, rejected, blocked.size),
   };
 }
@@ -213,13 +233,25 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
       rows += 1;
     }
 
+    // The reason comes down with the status. The server's copy wins outright,
+    // including over a change this handset made optimistically: by the time a
+    // row is in this delta the server has already decided what it holds.
     for (const item of master.equipment ?? []) {
       await txn.runAsync(
-        `INSERT INTO equipment (id, tag_number, name, status, is_active) VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO equipment
+           (id, tag_number, name, unit_key, location, status, status_note,
+            status_changed_by, status_changed_at, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            tag_number = excluded.tag_number, name = excluded.name,
-           status = excluded.status, is_active = excluded.is_active`,
-        item.id, item.tagNumber, item.name, item.status, item.isActive ? 1 : 0,
+           unit_key = excluded.unit_key, location = excluded.location,
+           status = excluded.status, status_note = excluded.status_note,
+           status_changed_by = excluded.status_changed_by,
+           status_changed_at = excluded.status_changed_at,
+           is_active = excluded.is_active`,
+        item.id, item.tagNumber, item.name, item.unitKey ?? '', item.location ?? '',
+        item.status, item.statusNote ?? '', item.statusChangedBy ?? '',
+        item.statusChangedAt ?? null, item.isActive ? 1 : 0,
       );
       rows += 1;
     }
@@ -310,6 +342,26 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
         c.clientId, c.location, c.note, c.status, c.operatorName, c.shiftGroup, c.shiftTime,
         c.beforePhoto, c.beforePhotoAt, c.afterPhoto, c.afterPhotoAt,
         c.id, c.receivedAt ?? c.beforePhotoAt,
+      );
+      rows += 1;
+    }
+
+    // Same ON CONFLICT DO NOTHING rule again: a client_id already here is this
+    // handset's own record, and the server's copy must not overwrite a local
+    // rejection the operator still has to fix. Rows from the server carry no
+    // client_id at all when an admin wrote them, so they are skipped entirely —
+    // the current reason reaches this phone on the equipment row instead.
+    for (const s of recent.equipmentStatus ?? []) {
+      if (!s.clientId) continue;
+      await txn.runAsync(
+        `INSERT INTO equipment_status_logs
+           (client_id, equipment_id, old_status, new_status, description, changed_at,
+            operator_name, shift_group, shift_time, sync_status, server_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+         ON CONFLICT(client_id) DO NOTHING`,
+        s.clientId, s.equipmentId, s.oldStatus ?? '', s.newStatus, s.description,
+        s.changedAt, s.operatorName, s.shiftGroup, s.shiftTime, s.id,
+        s.receivedAt ?? s.changedAt,
       );
       rows += 1;
     }
