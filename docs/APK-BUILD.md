@@ -73,6 +73,28 @@ any shift that happens to be offline at the time, not just an inconvenience.
 
 Back it up alongside the VPS `.env.field` secrets.
 
+### A PKCS12 keystore has no separate key password
+
+`keytool -genkeypair -storetype PKCS12` produces a **PKCS12** store, and the
+format has no concept of a per-key password: the private key is encrypted with
+the *store* password. Passing a different `-keypass` does not fail — keytool
+accepts it and quietly ignores it.
+
+So `SRU_RELEASE_KEY_PASSWORD` **must equal** `SRU_RELEASE_STORE_PASSWORD`. If it
+does not, everything looks fine for four minutes and then the very last task
+fails:
+
+```
+Execution failed for task ':app:packageRelease'.
+> KeytoolException: Failed to read key sru-field from store "...":
+  Get Key failed: Given final block not properly padded.
+```
+
+"Store opened, key would not decrypt" is the signature of exactly this. Note
+that `keytool -list` and even `keytool -certreq` accept **either** password for
+a PKCS12 store, so they cannot be used to diagnose it — AGP goes through the
+JCA `KeyStore` API, which does not ignore the key password.
+
 ## Building
 
 ```powershell
@@ -135,6 +157,11 @@ Fix the plugin — do not work around it by editing `build.gradle`.
    records somewhere nobody will look. Settings shows a red warning when the
    build is pointed at a local server; check it after installing.
 3. `npm run lint && npm run typecheck && npx jest`.
+4. Set both env vars in the shell — neither is inherited from Android Studio:
+   `$env:JAVA_HOME` and `$env:ANDROID_HOME` (see Prerequisites). Missing
+   `ANDROID_HOME` fails early with "SDK location not found", because
+   `prebuild --clean` deletes `local.properties` along with the rest of
+   `android/`.
 
 ### Always `prebuild --clean`, and check the built bundle
 
