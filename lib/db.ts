@@ -234,7 +234,64 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       CREATE INDEX IF NOT EXISTS idx_eqstatus_equipment ON equipment_status_logs(equipment_id, changed_at DESC);
     `,
   },
+  {
+    // A photo file can go missing from the phone — restored from a backup,
+    // deleted by hand, storage corruption. Where the photo is corroboration
+    // rather than the evidence itself, the record still goes up; this records
+    // that it went without one, so the operator is not left wondering.
+    version: 3,
+    sql: `
+      ALTER TABLE tank_readings ADD COLUMN photo_lost INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE maintenance_task_logs ADD COLUMN photo_lost INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
+
+/**
+ * Writes one equipment row from the server, all columns.
+ *
+ * Shared by the login bootstrap and the delta pull because they must agree.
+ * They did not: login wrote five of ten columns, discarding the status note and
+ * location the server had already sent, and since login also stores the
+ * server's dataVersion as the pull cursor, the next delta contained only rows
+ * that changed afterwards. The row stayed half-written until an admin happened
+ * to touch that equipment — showing "Belum ada keterangan status." for a pump
+ * that had a perfectly good reason recorded against it.
+ */
+export type EquipmentPayload = {
+  id: number;
+  tagNumber: string;
+  name: string;
+  unitKey?: string;
+  location?: string;
+  status: string;
+  statusNote?: string;
+  statusChangedBy?: string;
+  statusChangedAt?: string | null;
+  isActive?: boolean;
+};
+
+export function equipmentUpsert(): string {
+  return `INSERT INTO equipment
+       (id, tag_number, name, unit_key, location, status, status_note,
+        status_changed_by, status_changed_at, is_active)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       tag_number = excluded.tag_number, name = excluded.name,
+       unit_key = excluded.unit_key, location = excluded.location,
+       status = excluded.status, status_note = excluded.status_note,
+       status_changed_by = excluded.status_changed_by,
+       status_changed_at = excluded.status_changed_at,
+       is_active = excluded.is_active`;
+}
+
+export function equipmentValues(e: EquipmentPayload): (string | number | null)[] {
+  return [
+    e.id, e.tagNumber, e.name, e.unitKey ?? '', e.location ?? '',
+    e.status, e.statusNote ?? '', e.statusChangedBy ?? '',
+    e.statusChangedAt ?? null, (e.isActive ?? true) ? 1 : 0,
+  ];
+}
 
 /** Every table holding operator input. The sync engine iterates this. */
 export const FIELD_TABLES = [

@@ -1,5 +1,6 @@
 import * as Crypto from 'expo-crypto';
 import { STATUS_LABEL } from '@/constants/theme';
+import { isoDaysAgo } from './format';
 import {
   ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload, TaskLogPayload,
 } from './api';
@@ -65,14 +66,16 @@ export async function enqueueReading(reading: Omit<QueuedReading, 'clientId'>): 
 /**
  * Records waiting to go, oldest first.
  *
- * SYNC_ERROR rows are included: the server rejected them once, but the operator
- * may have corrected the data since, and a record that is never retried is a
- * record silently abandoned.
+ * PENDING_SYNC only. A SYNC_ERROR row was rejected on domain grounds and
+ * nothing about it has changed since, so re-sending it every cycle produced the
+ * same rejection forever: a badge that never reaches zero, "N ditolak" on every
+ * sync, and no way out. It goes again when the operator asks it to, from the
+ * Sync screen (retryRecord), which is also where it can be discarded.
  */
 export async function pendingReadings(): Promise<ReadingPayload[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<Record<string, never>>(
-    `SELECT * FROM tank_readings WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+    `SELECT * FROM tank_readings WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
   );
 
   return rows.map((r: any) => ({
@@ -98,18 +101,31 @@ export async function pendingReadings(): Promise<ReadingPayload[]> {
    the retention sweep and the uploader can never disagree about where photos
    live.                                                                       */
 
-export const PHOTO_COLUMNS: { table: FieldTable; local: string; remote: string }[] = [
-  { table: 'tank_readings', local: 'photo_local_uri', remote: 'photo_path' },
-  { table: 'cleaning_sessions', local: 'before_photo_local_uri', remote: 'before_photo' },
-  { table: 'cleaning_sessions', local: 'after_photo_local_uri', remote: 'after_photo' },
-  { table: 'maintenance_task_logs', local: 'photo_local_uri', remote: 'photo_path' },
+/**
+ * `required` decides what happens when the local file has gone missing.
+ *
+ * For cleaning the photographs *are* the record — a session with no before and
+ * after proves nothing happened, so it must not go up without them (doc 02 §3).
+ * A reading's photo and a task log's are corroboration; the form itself calls
+ * the latter "Foto bukti (opsional)". Discarding a valid measurement because a
+ * file vanished would be the worse loss, so those go without it and say so.
+ */
+export const PHOTO_COLUMNS: {
+  table: FieldTable; local: string; remote: string; required: boolean;
+}[] = [
+  { table: 'tank_readings', local: 'photo_local_uri', remote: 'photo_path', required: false },
+  { table: 'cleaning_sessions', local: 'before_photo_local_uri', remote: 'before_photo', required: true },
+  { table: 'cleaning_sessions', local: 'after_photo_local_uri', remote: 'after_photo', required: true },
+  { table: 'maintenance_task_logs', local: 'photo_local_uri', remote: 'photo_path', required: false },
 ];
 
 export type PendingPhoto = {
   table: FieldTable;
   clientId: string;
   localUri: string;
+  localColumn: string;
   remoteColumn: string;
+  required: boolean;
 };
 
 /**
@@ -126,7 +142,7 @@ export async function pendingPhotos(): Promise<PendingPhoto[]> {
   for (const column of PHOTO_COLUMNS) {
     const rows = await db.getAllAsync<{ client_id: string; local: string }>(
       `SELECT client_id, ${column.local} AS local FROM ${column.table}
-        WHERE sync_status != 'SYNCED'
+        WHERE sync_status = 'PENDING_SYNC'
           AND ${column.local} != ''
           AND ${column.remote} = ''`,
     );
@@ -135,7 +151,9 @@ export async function pendingPhotos(): Promise<PendingPhoto[]> {
         table: column.table,
         clientId: row.client_id,
         localUri: row.local,
+        localColumn: column.local,
         remoteColumn: column.remote,
+        required: column.required,
       });
     }
   }
@@ -209,7 +227,7 @@ export async function enqueueActivity(activity: QueuedActivity): Promise<string>
 export async function pendingActivities(): Promise<ActivityPayload[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
-    `SELECT * FROM activity_logs WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+    `SELECT * FROM activity_logs WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
   );
 
   return rows.map((r) => ({
@@ -326,7 +344,7 @@ export async function completeCleaning(clientId: string, afterPhotoLocalUri: str
 export async function pendingCleaning(): Promise<CleaningPayload[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
-    `SELECT * FROM cleaning_sessions WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+    `SELECT * FROM cleaning_sessions WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
   );
 
   return rows.map((r) => ({
@@ -544,7 +562,7 @@ export async function enqueueEquipmentStatus(change: QueuedEquipmentStatus): Pro
 export async function pendingEquipmentStatus(): Promise<EquipmentStatusPayload[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
-    `SELECT * FROM equipment_status_logs WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+    `SELECT * FROM equipment_status_logs WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
   );
 
   return rows.map((r) => ({
@@ -614,6 +632,8 @@ export type TaskLogRow = {
   note: string;
   photoLocalUri: string;
   photoPath: string;
+  /** The photo file went missing before it could be uploaded. */
+  photoLost: boolean;
   logTime: string;
   operatorName: string;
   shiftTime: string;
@@ -637,6 +657,7 @@ export async function listTaskLogs(taskId: number, limit = 50): Promise<TaskLogR
     note: r.note ?? '',
     photoLocalUri: r.photo_local_uri ?? '',
     photoPath: r.photo_path ?? '',
+    photoLost: r.photo_lost === 1,
     logTime: r.log_time,
     operatorName: r.operator_name ?? '',
     shiftTime: r.shift_time ?? '',
@@ -698,7 +719,7 @@ export async function enqueueTaskLog(log: QueuedTaskLog): Promise<string> {
 export async function pendingTaskLogs(): Promise<TaskLogPayload[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
-    `SELECT * FROM maintenance_task_logs WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+    `SELECT * FROM maintenance_task_logs WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
   );
 
   return rows.map((r) => ({
@@ -936,6 +957,75 @@ export async function markError(clientId: string, code: string, message: string)
   );
 }
 
+/**
+ * Records the fact that a photo file is gone, and lets the record go without it.
+ *
+ * Only for tables where the photo is corroboration (PHOTO_COLUMNS.required is
+ * false). The dead local URI is cleared so the uploader stops retrying a file
+ * that will never come back, and photo_lost is set so the record can say why it
+ * has no photograph rather than looking like one was never taken.
+ */
+export async function markPhotoLost(photo: PendingPhoto): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    `UPDATE ${photo.table} SET ${photo.localColumn} = '', photo_lost = 1 WHERE client_id = ?`,
+    photo.clientId,
+  );
+}
+
+/**
+ * Puts a rejected record back in the queue at the operator's request.
+ *
+ * The server's reason is cleared with it: leaving a stale message on a record
+ * that is trying again would describe a verdict that no longer applies.
+ */
+export async function retryRecord(clientId: string): Promise<void> {
+  const db = await getDb();
+  const table = await tableForClientId(clientId);
+  if (!table) return;
+
+  await db.runAsync(
+    `UPDATE ${table}
+        SET sync_status = 'PENDING_SYNC', error_code = NULL, error_message = NULL
+      WHERE client_id = ? AND sync_status = 'SYNC_ERROR'`,
+    clientId,
+  );
+  await refreshUnsent();
+}
+
+/**
+ * Deletes a record the server refused, at the operator's request.
+ *
+ * This is the only path in the app that destroys operator input, and it is
+ * deliberately narrow: `SYNC_ERROR` only. The server never accepted these, so
+ * the phone is the only copy (doc 07 §5) — which is exactly why it is behind a
+ * confirmation and why PENDING_SYNC is not eligible. A record still waiting for
+ * signal has done nothing wrong.
+ *
+ * @returns true when a row was actually removed
+ */
+export async function discardRejected(clientId: string): Promise<boolean> {
+  const db = await getDb();
+  const table = await tableForClientId(clientId);
+  if (!table) return false;
+
+  const guard = `client_id = ? AND sync_status = 'SYNC_ERROR'`;
+
+  // Photos go with the record, same rule as retention: a file nothing refers to
+  // is one the operator cannot explain or reach.
+  for (const column of PHOTO_COLUMNS.filter((c) => c.table === table)) {
+    const rows = await db.getAllAsync<{ local: string }>(
+      `SELECT ${column.local} AS local FROM ${table} WHERE ${guard} AND ${column.local} != ''`,
+      clientId,
+    );
+    for (const row of rows) deletePhoto(row.local);
+  }
+
+  const result = await db.runAsync(`DELETE FROM ${table} WHERE ${guard}`, clientId);
+  await refreshUnsent();
+  return result.changes > 0;
+}
+
 export type UnsentRecord = {
   clientId: string;
   table: FieldTable;
@@ -1043,6 +1133,9 @@ export async function unsentRecords(): Promise<UnsentRecord[]> {
   return all.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
+/** The phone's rolling window (doc 07 §5). */
+export const RETENTION_DAYS = 7;
+
 /**
  * Rolling 7-day retention (doc 07 §5).
  *
@@ -1057,6 +1150,7 @@ export async function unsentRecords(): Promise<UnsentRecord[]> {
  */
 export async function runRetention(): Promise<number> {
   const db = await getDb();
+  const cutoff = isoDaysAgo(RETENTION_DAYS);
   let removed = 0;
 
   for (const table of FIELD_TABLES) {
@@ -1064,8 +1158,13 @@ export async function runRetention(): Promise<number> {
       ? " AND status != 'IN_PROGRESS'"
       : '';
 
+    // The cutoff is ISO because created_at is ISO. It used to compare against
+    // datetime('now','-7 days'), whose space separator sorts below ISO's 'T',
+    // so every row dated on the cutoff day looked newer than the cutoff and
+    // survived — a 7-to-8 day window rather than 7. It erred safe, but by
+    // accident rather than design.
     const expiring = `sync_status = 'SYNCED'
-          AND created_at < datetime('now', '-7 days')
+          AND created_at < ?
           ${keepUnfinishedCleaning}`;
 
     // The photos of rows about to go are collected first and deleted with them
@@ -1076,11 +1175,12 @@ export async function runRetention(): Promise<number> {
     for (const column of PHOTO_COLUMNS.filter((c) => c.table === table)) {
       const rows = await db.getAllAsync<{ local: string }>(
         `SELECT ${column.local} AS local FROM ${table} WHERE ${column.local} != '' AND ${expiring}`,
+        cutoff,
       );
       for (const row of rows) deletePhoto(row.local);
     }
 
-    const result = await db.runAsync(`DELETE FROM ${table} WHERE ${expiring}`);
+    const result = await db.runAsync(`DELETE FROM ${table} WHERE ${expiring}`, cutoff);
     removed += result.changes;
   }
 

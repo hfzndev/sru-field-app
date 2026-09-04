@@ -1,9 +1,9 @@
 import * as Network from 'expo-network';
 import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto } from './api';
-import { getDb, getMetaNumber, setMeta } from './db';
+import { equipmentUpsert, equipmentValues, getDb, getMetaNumber, setMeta } from './db';
 import {
-  markError, markPhotoUploaded, markSynced, pendingActivities, pendingCleaning,
-  pendingEquipmentStatus, pendingTaskLogs,
+  markError, markPhotoLost, markPhotoUploaded, markSynced, pendingActivities,
+  pendingCleaning, pendingEquipmentStatus, pendingTaskLogs,
   pendingPhotos, pendingReadings, runRetention,
 } from './queue';
 import { refreshUnsent } from './status';
@@ -25,6 +25,8 @@ export type SyncOutcome = {
   ok: boolean;
   offline: boolean;
   photos: number;
+  /** Photos whose local file was gone; their records went up without them. */
+  photosLost: number;
   pushed: number;
   duplicates: number;
   rejected: number;
@@ -74,7 +76,7 @@ export function runSync(): Promise<SyncOutcome> {
 
 async function execute(): Promise<SyncOutcome> {
   const base: SyncOutcome = {
-    ok: false, offline: false, photos: 0, pushed: 0, duplicates: 0,
+    ok: false, offline: false, photos: 0, photosLost: 0, pushed: 0, duplicates: 0,
     rejected: 0, pulled: 0, purged: 0, message: '',
   };
 
@@ -91,6 +93,7 @@ async function execute(): Promise<SyncOutcome> {
   const photos = await pendingPhotos();
   const blocked = new Set<string>();
   let uploaded = 0;
+  let photosLost = 0;
 
   for (const photo of photos) {
     try {
@@ -98,9 +101,32 @@ async function execute(): Promise<SyncOutcome> {
       await markPhotoUploaded(photo, path);
       uploaded += 1;
     } catch (err) {
-      // The record waits for the next cycle rather than going up without its
-      // photograph. A cleaning session whose evidence never arrives is worse
-      // than one that is still marked unsent — the second is visibly unfinished.
+      // A file that is gone is not the same failure as no signal, and treating
+      // them alike left the record retrying an upload that could never succeed,
+      // every cycle, with nothing on screen to distinguish it from waiting for
+      // a bar of signal.
+      const missing = err instanceof ApiError && err.code === 'PHOTO_MISSING';
+
+      if (missing && !photo.required) {
+        // The photograph corroborates this record; it is not the record. Losing
+        // a valid measurement because a file vanished is the worse outcome.
+        await markPhotoLost(photo);
+        photosLost += 1;
+        continue;
+      }
+
+      if (missing) {
+        // Cleaning: the photographs are the evidence. It stops waiting and
+        // becomes something the operator can see and act on, rather than
+        // retrying forever in silence.
+        await markError(
+          photo.clientId, 'PHOTO_MISSING',
+          'Foto bukti hilang di HP — sesi ini tidak bisa dikirim tanpa foto.',
+        );
+        continue;
+      }
+
+      // Ordinary failure — no signal, a timeout. Hold the record and try again.
       blocked.add(photo.clientId);
       if (!(err instanceof OfflineError)) {
         console.warn('photo upload failed:', err);
@@ -190,13 +216,16 @@ async function execute(): Promise<SyncOutcome> {
     ok: true,
     offline: false,
     photos: uploaded,
+    photosLost,
     pushed, duplicates, rejected, pulled, purged, pullError,
-    message: summarise(pushed, duplicates, rejected, blocked.size),
+    message: summarise(pushed, duplicates, rejected, blocked.size, photosLost),
   };
 }
 
-function summarise(pushed: number, duplicates: number, rejected: number, waiting: number): string {
-  if (pushed === 0 && duplicates === 0 && rejected === 0 && waiting === 0) {
+function summarise(
+  pushed: number, duplicates: number, rejected: number, waiting: number, photosLost: number,
+): string {
+  if (pushed === 0 && duplicates === 0 && rejected === 0 && waiting === 0 && photosLost === 0) {
     return 'Tidak ada yang perlu dikirim';
   }
 
@@ -207,6 +236,9 @@ function summarise(pushed: number, duplicates: number, rejected: number, waiting
   // Named rather than folded into "belum terkirim": the operator should know
   // the hold-up is the photo, not the record.
   if (waiting) parts.push(`${waiting} menunggu foto terkirim`);
+  // Said out loud rather than left to be noticed. The record did go up; what
+  // is missing is a photograph nobody can get back.
+  if (photosLost) parts.push(`${photosLost} foto hilang di HP`);
   return parts.join(' · ');
 }
 
@@ -239,23 +271,9 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
     // The reason comes down with the status. The server's copy wins outright,
     // including over a change this handset made optimistically: by the time a
     // row is in this delta the server has already decided what it holds.
+    // Same statement as the login bootstrap (lib/db.ts) so the two agree.
     for (const item of master.equipment ?? []) {
-      await txn.runAsync(
-        `INSERT INTO equipment
-           (id, tag_number, name, unit_key, location, status, status_note,
-            status_changed_by, status_changed_at, is_active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET
-           tag_number = excluded.tag_number, name = excluded.name,
-           unit_key = excluded.unit_key, location = excluded.location,
-           status = excluded.status, status_note = excluded.status_note,
-           status_changed_by = excluded.status_changed_by,
-           status_changed_at = excluded.status_changed_at,
-           is_active = excluded.is_active`,
-        item.id, item.tagNumber, item.name, item.unitKey ?? '', item.location ?? '',
-        item.status, item.statusNote ?? '', item.statusChangedBy ?? '',
-        item.statusChangedAt ?? null, item.isActive ? 1 : 0,
-      );
+      await txn.runAsync(equipmentUpsert(), ...equipmentValues(item));
       rows += 1;
     }
 
@@ -385,17 +403,24 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
       rows += 1;
     }
 
-    // The deviation cache is rebuilt from what the server returned, so the tape
-    // suggestion reflects readings taken on the other handsets too — three
-    // phones share a shift, and drift is a property of the tank, not the device.
-    const withDcs = (recent.readings ?? []).filter((r) => r.dcsLevelMm !== null);
-    if (withDcs.length > 0) {
+    // The deviation cache comes from the server's own per-tank selection, the
+    // same one login sends — 5 readings per tank, every shift, any age.
+    //
+    // It used to be rebuilt from `recent.readings`, which is this shift's last
+    // 7 days: a delete-all followed by a refill from a narrower set. Any tank
+    // this shift had not measured with a readable DCS in that week ended up
+    // with no samples at all, and its tape suggestion quietly fell back to raw
+    // DCS — the exact failure the cache exists to prevent, and doc 07 §5 calls
+    // this cache permanent rather than a window.
+    if (response.tankDeviation) {
       await txn.runAsync('DELETE FROM tank_deviation');
-      for (const r of withDcs) {
-        await txn.runAsync(
-          'INSERT INTO tank_deviation (tank_id, level_mm, dcs_level_mm, reading_at) VALUES (?, ?, ?, ?)',
-          r.tankId, r.levelMm, r.dcsLevelMm, r.readingAt,
-        );
+      for (const [tankId, samples] of Object.entries(response.tankDeviation)) {
+        for (const s of samples) {
+          await txn.runAsync(
+            'INSERT INTO tank_deviation (tank_id, level_mm, dcs_level_mm, reading_at) VALUES (?, ?, ?, ?)',
+            Number(tankId), s.levelMm, s.dcsLevelMm, s.readingAt,
+          );
+        }
       }
     }
   });

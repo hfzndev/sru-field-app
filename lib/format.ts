@@ -77,3 +77,38 @@ export function suggestShiftTime(now: Date = new Date()): 'pagi' | 'sore' | 'mal
   if (wibHour >= 16) return 'sore';
   return 'malam';
 }
+
+/**
+ * ISO cutoff for "n days before now" — for comparing against stored columns.
+ *
+ * Every timestamp column on this phone holds ISO (created_at, reading_at,
+ * activity_at...), so the cutoff must be ISO too. Comparing them against
+ * SQLite's own `datetime('now', '-7 days')` mixes formats, and SQLite compares
+ * these as plain text: at index 10 ISO has 'T' (0x54) where the SQLite form has
+ * ' ' (0x20), so an ISO value always sorts above a SQLite one for the same
+ * instant. The comparison then turns on the separator rather than the time.
+ *
+ * The server hit this too and solved it the other way round, converting the
+ * bound to SQLite format (sru-field-api/lib/time.js `isoToSqlite`). Here the
+ * columns are ISO, so the honest fix is to keep everything ISO and never let
+ * the two meet.
+ */
+export function isoDaysAgo(days: number, from: Date = new Date()): string {
+  return new Date(from.getTime() - days * 86400000).toISOString();
+}
+
+/**
+ * ISO instant for midnight WIB at the start of today.
+ *
+ * "Hari ini" has to mean the calendar day the operator is living in. A rolling
+ * 24 hours quietly includes half of yesterday, and a UTC day starts at 07:00
+ * WIB — which would put the whole malam shift on the wrong date.
+ */
+export function isoStartOfWibToday(from: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: WIB, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(from);
+  // WIB is UTC+7 year-round — Indonesia has no daylight saving — so midnight
+  // WIB is 17:00 UTC on the previous day.
+  return new Date(`${parts}T00:00:00+07:00`).toISOString();
+}

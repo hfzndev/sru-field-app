@@ -5,7 +5,7 @@ import { Alert, Button, Card, Chip, Empty, Heading, Screen } from '@/components/
 import { colors, space, type } from '@/constants/theme';
 import { getMeta } from '@/lib/db';
 import { formatDateTime } from '@/lib/format';
-import { UnsentRecord, unsentRecords } from '@/lib/queue';
+import { UnsentRecord, discardRejected, retryRecord, unsentRecords } from '@/lib/queue';
 import { SyncOutcome, runSync } from '@/lib/sync';
 import { refreshUnsent } from '@/lib/status';
 
@@ -25,6 +25,7 @@ export default function SyncScreen() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<SyncOutcome | null>(null);
+  const [discarding, setDiscarding] = useState<UnsentRecord | null>(null);
 
   const refresh = useCallback(async () => {
     setRecords(await unsentRecords());
@@ -50,6 +51,19 @@ export default function SyncScreen() {
     }
   }
 
+  async function retry(record: UnsentRecord) {
+    await retryRecord(record.clientId);
+    await refresh();
+    await syncNow();
+  }
+
+  async function discard(record: UnsentRecord) {
+    await discardRejected(record.clientId);
+    setDiscarding(null);
+    await refresh();
+    await refreshUnsent();
+  }
+
   const unsent = records?.length ?? 0;
   const failed = records?.filter((r) => r.status === 'SYNC_ERROR').length ?? 0;
 
@@ -64,8 +78,10 @@ export default function SyncScreen() {
           // completed. Green next to "1 ditolak" tells an operator their work
           // went through when it did not.
           <Alert
-            error={outcome.offline || !outcome.ok || outcome.rejected > 0 ? outcome.message : null}
-            ok={outcome.ok && !outcome.offline && outcome.rejected === 0 ? outcome.message : null}
+            error={outcome.offline || !outcome.ok
+              || outcome.rejected > 0 || outcome.photosLost > 0 ? outcome.message : null}
+            ok={outcome.ok && !outcome.offline
+              && outcome.rejected === 0 && outcome.photosLost === 0 ? outcome.message : null}
           />
         )}
 
@@ -91,7 +107,8 @@ export default function SyncScreen() {
           </Text>
           {failed > 0 && (
             <Text style={styles.warn}>
-              {failed} catatan ditolak server — perlu diperbaiki, tidak akan terkirim sendiri.
+              {failed} catatan ditolak server. Tidak dikirim ulang otomatis — pilih
+              Kirim ulang atau Hapus di bawah.
             </Text>
           )}
         </Card>
@@ -124,6 +141,40 @@ export default function SyncScreen() {
                 </View>
                 <Chip value={record.status} label={record.status === 'SYNC_ERROR' ? 'Ditolak' : 'Menunggu'} />
               </View>
+
+              {/* Only rejected records get actions. One still waiting for
+                  signal has done nothing wrong and needs no decision from
+                  anyone. */}
+              {record.status === 'SYNC_ERROR' && discarding?.clientId !== record.clientId && (
+                <View style={styles.actions}>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Kirim ulang" variant="secondary" onPress={() => retry(record)} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Button title="Hapus" variant="danger" onPress={() => setDiscarding(record)} />
+                  </View>
+                </View>
+              )}
+
+              {/* Confirmed in place rather than in a system dialog: the native
+                  alert renders below this app's 16pt floor (doc 03 §1). */}
+              {discarding?.clientId === record.clientId && (
+                <View style={styles.confirm}>
+                  <Text style={styles.confirmText}>
+                    Hapus catatan ini dari HP? Server tidak pernah menerimanya, jadi HP
+                    ini satu-satunya tempat catatan ini ada. Setelah dihapus tidak bisa
+                    dikembalikan.
+                  </Text>
+                  <View style={styles.actions}>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Batal" variant="secondary" onPress={() => setDiscarding(null)} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Button title="Ya, hapus" variant="danger" onPress={() => discard(record)} />
+                    </View>
+                  </View>
+                </View>
+              )}
             </Card>
           ))
         )}
@@ -136,6 +187,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   label: { ...type.bodyStrong, color: colors.text },
   meta: { ...type.caption, color: colors.muted, marginTop: 2 },
+  actions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
+  confirm: { marginTop: space.md },
+  confirmText: { ...type.body, color: colors.text, marginBottom: space.sm },
   warn: { ...type.caption, color: colors.danger, marginTop: space.sm },
   error: { ...type.caption, color: colors.danger, marginTop: 4 },
   sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },

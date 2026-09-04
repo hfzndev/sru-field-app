@@ -461,6 +461,11 @@ export type PullResponse = {
     taskLogs: RecentTaskLog[];
     equipmentStatus?: RecentEquipmentStatus[];
   };
+  /**
+   * Five readings per tank, all shifts, any age — the same set login sends.
+   * Not a delta and not shift-scoped: drift belongs to the tank (doc 07 §5).
+   */
+  tankDeviation?: Record<string, DeviationDto[]>;
   serverTime: string;
 };
 

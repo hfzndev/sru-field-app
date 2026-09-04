@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Button, Card, Chip, Heading, Loading, Screen } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
+import { isoStartOfWibToday } from '@/lib/format';
 import { getDb, unsentCount } from '@/lib/db';
 import { Session, getSession } from '@/lib/session';
 
@@ -31,8 +32,13 @@ export default function DashboardScreen() {
         const db = await getDb();
         const session = await getSession();
         const unsent = await unsentCount();
+        // Midnight WIB, not a rolling 24 hours and not a UTC day. The old
+        // query compared ISO reading_at against datetime('now','-1 day'),
+        // whose space separator sorts below 'T', so the window opened at
+        // 00:00 UTC of yesterday and "Hari ini" counted up to two days.
         const row = await db.getFirstAsync<{ n: number }>(
-          "SELECT COUNT(*) AS n FROM tank_readings WHERE reading_at >= datetime('now', '-1 day')",
+          'SELECT COUNT(*) AS n FROM tank_readings WHERE reading_at >= ?',
+          isoStartOfWibToday(),
         );
         if (!ignore) setData({ session, unsent, readingsToday: row?.n ?? 0 });
       })();

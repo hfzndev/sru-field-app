@@ -1,6 +1,8 @@
 import * as SecureStore from 'expo-secure-store';
 import { LoginResponse } from './api';
-import { ensureInstallId, getDb, getMeta, setMeta } from './db';
+import {
+  ensureInstallId, equipmentUpsert, equipmentValues, getDb, getMeta, setMeta,
+} from './db';
 
 /**
  * The signed-in shift, and the token that proves it.
@@ -140,12 +142,13 @@ export async function cacheBootstrap(bootstrap: LoginResponse): Promise<void> {
       );
     }
 
+    // Every column the server sent, via the same statement the delta pull uses.
+    // Writing a subset here left the row incomplete for as long as it took an
+    // admin to edit that equipment, because the pull cursor starts at this
+    // login's dataVersion.
     await txn.runAsync('DELETE FROM equipment');
     for (const e of bootstrap.equipment) {
-      await txn.runAsync(
-        'INSERT INTO equipment (id, tag_number, name, status, is_active) VALUES (?, ?, ?, ?, 1)',
-        e.id, e.tagNumber, e.name, e.status,
-      );
+      await txn.runAsync(equipmentUpsert(), ...equipmentValues(e));
     }
 
     await txn.runAsync('DELETE FROM contractors');

@@ -248,6 +248,13 @@ export default function TaskDetailScreen() {
 
             {!!entry.note && <Text style={styles.note}>{entry.note}</Text>}
 
+            {/* Said, not left as an absence. A record whose photo simply
+                vanished looks identical to one where nobody took a photo, and
+                the operator remembers taking it. */}
+            {entry.photoLost && (
+              <Text style={styles.photoLost}>Foto bukti hilang di HP sebelum sempat terkirim.</Text>
+            )}
+
             {!!(entry.photoLocalUri || entry.photoPath) && (
               <View style={styles.photoRow}>
                 <PhotoThumb
@@ -283,6 +290,7 @@ const styles = StyleSheet.create({
   sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },
   unsent: { ...type.caption, color: colors.warn },
   photoRow: { flexDirection: 'row', marginTop: space.md },
+  photoLost: { ...type.caption, color: colors.warn, marginTop: space.sm },
 
   steps: { flexDirection: 'row', gap: space.xs },
   step: {
