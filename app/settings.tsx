@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import type { File } from 'expo-file-system';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
@@ -11,6 +12,7 @@ import { formatDateTime } from '@/lib/format';
 import { Session, endSession, getSession, getToken } from '@/lib/session';
 import { refreshUnsent, useOnline, useUnsent } from '@/lib/status';
 import { isOnline } from '@/lib/sync';
+import { UpdateStatus, checkForUpdate, downloadUpdate, installApk, sweepOldApks } from '@/lib/update';
 
 /**
  * About, account, and local diagnostics (doc 03 §5).
@@ -36,6 +38,7 @@ export default function SettingsScreen() {
   const [info, setInfo] = useState<Info | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
+  const [update, setUpdate] = useState<UpdateStatus>({ state: 'UNKNOWN' });
 
   useFocusEffect(useCallback(() => {
     let ignore = false;
@@ -52,6 +55,11 @@ export default function SettingsScreen() {
       setInstallId(id);
       setFirstOpened(opened);
       setInfo({ session, lastSync });
+
+      // After the screen has drawn, not before: the check needs the network and
+      // this screen must render instantly with no signal.
+      const status = await checkForUpdate();
+      if (!ignore) setUpdate(status);
     })();
     return () => { ignore = true; };
   }, []));
@@ -105,6 +113,8 @@ export default function SettingsScreen() {
       {IS_LOCAL_API && (
         <Alert error="Aplikasi ini menunjuk ke server lokal, bukan server lapangan. Jangan dipakai untuk mencatat sungguhan." />
       )}
+
+      <UpdateCard status={update} currentVersion={appVersion} />
 
       <Text style={styles.section}>Akun shift</Text>
       <Card>
@@ -210,12 +220,103 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * The update banner (doc 09 §3 lapis 3).
+ *
+ * Only ever shown when there is genuinely something newer. UNKNOWN — which is
+ * what being out of signal returns — renders nothing at all: an operator in a
+ * dead spot must not be told the app failed at something they did not ask for.
+ *
+ * Downloading and installing are two separate taps on purpose. The download is
+ * ~70MB and finishes whenever it finishes; installing interrupts whatever the
+ * operator is doing and hands them to the system installer. Bundling them
+ * would mean a tap in the control room ambushes them in the field.
+ */
+function UpdateCard({ status, currentVersion }: { status: UpdateStatus; currentVersion: string }) {
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [ready, setReady] = useState<File | null>(null);
+  const [error, setError] = useState('');
+
+  if (status.state !== 'AVAILABLE') return null;
+
+  async function download() {
+    if (status.state !== 'AVAILABLE') return;
+    setBusy(true);
+    setError('');
+    try {
+      const file = await downloadUpdate(status.version, setProgress);
+      // Older builds are dead weight once this one is on the phone, and 70MB
+      // each competes with a week of photographs for space.
+      sweepOldApks(status.version);
+      setReady(file);
+    } catch {
+      setError('Unduhan gagal — coba lagi saat sinyal lebih baik.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <Text style={styles.section}>Update aplikasi</Text>
+      <Card>
+        <Row label="Versi di HP" value={currentVersion} />
+        <Row label="Versi di server" value={status.version} />
+        {/* One decimal, not a round number: a small build shown as "0 MB"
+            reads as a broken download rather than a quick one. */}
+        {status.bytes > 0 && (
+          <Row label="Ukuran" value={`${(status.bytes / 1024 / 1024).toFixed(1)} MB`} />
+        )}
+
+        <Alert error={error || null} />
+
+        {ready ? (
+          <>
+            <Button
+              title="Pasang sekarang"
+              variant="primary"
+              onPress={async () => {
+                try {
+                  await installApk(ready);
+                } catch {
+                  setError('Tidak bisa membuka installer. Buka file APK-nya secara manual.');
+                }
+              }}
+            />
+            <Text style={styles.updateNote}>
+              Android akan meminta izin &quot;install aplikasi tidak dikenal&quot; sekali.
+              Catatan yang tersimpan di HP tidak hilang saat update.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Button
+              title={busy
+                ? (progress > 0 ? `Mengunduh… ${Math.round(progress * 100)}%` : 'Mengunduh…')
+                : 'Unduh update'}
+              variant="primary"
+              busy={busy}
+              onPress={download}
+            />
+            <Text style={styles.updateNote}>
+              Unduh saat sinyal bagus. Catatan yang belum terkirim tidak hilang saat update —
+              tapi kirim dulu kalau bisa.
+            </Text>
+          </>
+        )}
+      </Card>
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.sm, gap: space.md },
   label: { ...type.body, color: colors.muted, flexShrink: 1 },
   value: { ...type.bodyStrong, color: colors.text, flexShrink: 1, textAlign: 'right' },
   section: { ...type.heading, color: colors.text, marginTop: space.md, marginBottom: space.sm },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: space.sm },
+  updateNote: { ...type.caption, color: colors.muted, marginTop: space.sm },
   confirmTitle: { ...type.bodyStrong, color: colors.text, marginBottom: space.sm },
   confirmRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
   warn: { ...type.body, color: colors.danger, marginBottom: space.sm },
