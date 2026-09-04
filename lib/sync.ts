@@ -3,7 +3,7 @@ import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto }
 import { getDb, getMetaNumber, setMeta } from './db';
 import {
   markError, markPhotoUploaded, markSynced, pendingActivities, pendingCleaning,
-  pendingEquipmentStatus,
+  pendingEquipmentStatus, pendingTaskLogs,
   pendingPhotos, pendingReadings, runRetention,
 } from './queue';
 import { refreshUnsent } from './status';
@@ -113,15 +113,18 @@ async function execute(): Promise<SyncOutcome> {
   const cleaning = (await pendingCleaning()).filter((c) => !blocked.has(c.clientId));
   // No photo on a status change, so nothing can hold one back.
   const equipmentStatus = await pendingEquipmentStatus();
+  const taskLogs = (await pendingTaskLogs()).filter((l) => !blocked.has(l.clientId));
 
   let pushed = 0;
   let duplicates = 0;
   let rejected = 0;
 
   if (readings.length > 0 || activities.length > 0 || cleaning.length > 0
-      || equipmentStatus.length > 0) {
+      || equipmentStatus.length > 0 || taskLogs.length > 0) {
     try {
-      const response = await apiSync(token, { readings, activities, cleaning, equipmentStatus });
+      const response = await apiSync(token, {
+        readings, activities, cleaning, equipmentStatus, taskLogs,
+      });
 
       // Acks are applied one at a time. If the app dies partway through, the
       // records already marked stay marked and the rest are simply retried —
@@ -342,6 +345,22 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
         c.clientId, c.location, c.note, c.status, c.operatorName, c.shiftGroup, c.shiftTime,
         c.beforePhoto, c.beforePhotoAt, c.afterPhoto, c.afterPhotoAt,
         c.id, c.receivedAt ?? c.beforePhotoAt,
+      );
+      rows += 1;
+    }
+
+    // Task progress from the shift's window, so a handset swapped in mid-shift
+    // sees what the others reported. Same ON CONFLICT DO NOTHING rule.
+    for (const l of recent.taskLogs ?? []) {
+      await txn.runAsync(
+        `INSERT INTO maintenance_task_logs
+           (client_id, task_id, new_status, progress_pct, note, photo_path,
+            operator_name, shift_group, shift_time, log_time, sync_status, server_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'SYNCED', ?, ?)
+         ON CONFLICT(client_id) DO NOTHING`,
+        l.clientId, l.taskId, l.newStatus, l.progressPct, l.note ?? '', l.photoPath ?? '',
+        l.operatorName ?? '', l.shiftGroup, l.shiftTime, l.logTime, l.id,
+        l.receivedAt ?? l.logTime,
       );
       rows += 1;
     }

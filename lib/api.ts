@@ -285,11 +285,35 @@ export type EquipmentStatusPayload = {
   shiftTime: string;
 };
 
+/**
+ * Progress on a maintenance task (doc 06 §5).
+ *
+ * `oldStatus` is absent for the same reason it is on a status change: the
+ * server reads the task's current state when the record lands, not what a phone
+ * that has been offline for days believes it was.
+ *
+ * Both `newStatus` and `progressPct` are nullable, and a record with neither is
+ * still worth sending -- "menunggu spare part" moves no numbers but is exactly
+ * what the next shift needs to read.
+ */
+export type TaskLogPayload = {
+  clientId: string;
+  taskId: number;
+  newStatus: string | null;
+  progressPct: number | null;
+  note: string;
+  photoPath: string;
+  logTime: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
 export type SyncPayload = {
   readings?: ReadingPayload[];
   activities?: ActivityPayload[];
   cleaning?: CleaningPayload[];
-  taskLogs?: unknown[];
+  taskLogs?: TaskLogPayload[];
   equipmentStatus?: EquipmentStatusPayload[];
 };
 
@@ -404,6 +428,23 @@ export type RecentEquipmentStatus = {
   receivedAt: string;
 };
 
+/** This shift's own task progress from the server's 7-day window (doc 06 §5). */
+export type RecentTaskLog = {
+  id: number;
+  clientId: string;
+  taskId: number;
+  oldStatus: string | null;
+  newStatus: string | null;
+  progressPct: number | null;
+  note: string;
+  photoPath: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  logTime: string | null;
+  receivedAt: string;
+};
+
 export type PullResponse = {
   dataVersion: number;
   master: {
@@ -417,7 +458,7 @@ export type PullResponse = {
     readings: RecentReading[];
     activities: RecentActivity[];
     cleaning: RecentCleaning[];
-    taskLogs: unknown[];
+    taskLogs: RecentTaskLog[];
     equipmentStatus?: RecentEquipmentStatus[];
   };
   serverTime: string;

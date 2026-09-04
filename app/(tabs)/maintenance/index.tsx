@@ -145,11 +145,11 @@ function EquipmentList({ rows, attention }: { rows: EquipmentRow[] | null; atten
 }
 
 /**
- * Open tasks, read-only for now.
+ * Open tasks, unfinished first.
  *
- * Cards are deliberately not pressable yet: recording progress arrives with the
- * task form, and a card that responds to nothing teaches operators that parts
- * of this app do not work.
+ * Tapping one opens the place progress is reported. Tasks themselves are
+ * read-only on the phone: they are created by an admin and travel down with the
+ * pull (doc 07 §7). What the operator adds is progress.
  */
 function TaskList({ rows }: { rows: TaskRow[] | null }) {
   if (rows === null) return <Loading />;
@@ -166,7 +166,10 @@ function TaskList({ rows }: { rows: TaskRow[] | null }) {
   return (
     <>
       {rows.map((task) => (
-        <Card key={task.id}>
+        <Card key={task.id} onPress={() => router.push({
+          pathname: '/(tabs)/maintenance/tasks/[id]',
+          params: { id: String(task.id) },
+        })}>
           <View style={styles.head}>
             <View style={styles.headText}>
               <Text style={styles.tag}>{task.title}</Text>

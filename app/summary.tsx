@@ -22,12 +22,18 @@ const KIND_LABEL: Record<string, string> = {
   READING: 'Ukur',
   ACTIVITY: 'Aktivitas',
   CLEANING: 'Bersih',
+  EQUIPMENT: 'Alat',
+  TASK: 'Task',
 };
 
 const KIND_COLOR: Record<string, string> = {
   READING: colors.accent,
   ACTIVITY: colors.ok,
   CLEANING: colors.warn,
+  // A pump that changed status is the line on this page the next shift is most
+  // likely to act on, so it is the one that reads as an alarm.
+  EQUIPMENT: colors.danger,
+  TASK: colors.neutral,
 };
 
 export default function SummaryScreen() {
@@ -76,6 +82,15 @@ export default function SummaryScreen() {
           <Stat value={data.cleaning} label="Bersih-bersih" />
         </View>
 
+        {/* Second row rather than five across: at the 16pt floor five columns
+            wrap into unreadable stacks on a narrow handset. */}
+        {(data.equipmentChanges > 0 || data.taskUpdates > 0) && (
+          <View style={styles.stats}>
+            <Stat value={data.equipmentChanges} label="Status alat" />
+            <Stat value={data.taskUpdates} label="Progres task" />
+          </View>
+        )}
+
         {/* Both of these are things the next shift inherits, so they are said
             here rather than left for someone to notice. */}
         {data.unfinishedCleaning > 0 && (
@@ -96,7 +111,7 @@ export default function SummaryScreen() {
         <Empty
           icon="🕐"
           title="Belum ada catatan shift ini"
-          hint="Pengukuran, aktivitas dan bersih-bersih akan muncul di sini."
+          hint="Pengukuran, aktivitas, bersih-bersih, status alat dan progres task akan muncul di sini."
         />
       ) : (
         data.entries.map((entry) => (

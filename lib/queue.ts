@@ -1,6 +1,8 @@
 import * as Crypto from 'expo-crypto';
 import { STATUS_LABEL } from '@/constants/theme';
-import { ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload } from './api';
+import {
+  ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload, TaskLogPayload,
+} from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
 import { deletePhoto, sweepOrphanPhotos } from './photos';
 import { refreshUnsent } from './status';
@@ -100,6 +102,7 @@ export const PHOTO_COLUMNS: { table: FieldTable; local: string; remote: string }
   { table: 'tank_readings', local: 'photo_local_uri', remote: 'photo_path' },
   { table: 'cleaning_sessions', local: 'before_photo_local_uri', remote: 'before_photo' },
   { table: 'cleaning_sessions', local: 'after_photo_local_uri', remote: 'after_photo' },
+  { table: 'maintenance_task_logs', local: 'photo_local_uri', remote: 'photo_path' },
 ];
 
 export type PendingPhoto = {
@@ -577,6 +580,11 @@ export type TaskRow = {
  * the pull (doc 07 §7). What the operator adds is progress, which is a separate
  * record type entirely.
  */
+export async function getTask(id: number): Promise<TaskRow | null> {
+  const all = await listTasks();
+  return all.find((t) => t.id === id) ?? null;
+}
+
 export async function listTasks(): Promise<TaskRow[]> {
   const db = await getDb();
   const rows = await db.getAllAsync<any>(
@@ -598,12 +606,121 @@ export async function listTasks(): Promise<TaskRow[]> {
   }));
 }
 
+export type TaskLogRow = {
+  clientId: string;
+  taskId: number;
+  newStatus: string | null;
+  progressPct: number | null;
+  note: string;
+  photoLocalUri: string;
+  photoPath: string;
+  logTime: string;
+  operatorName: string;
+  shiftTime: string;
+  syncStatus: string;
+};
+
+/** What this handset knows about one task's progress, newest first. */
+export async function listTaskLogs(taskId: number, limit = 50): Promise<TaskLogRow[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM maintenance_task_logs WHERE task_id = ?
+      ORDER BY log_time DESC, rowid DESC LIMIT ?`,
+    taskId, limit,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    taskId: r.task_id,
+    newStatus: r.new_status ?? null,
+    progressPct: r.progress_pct ?? null,
+    note: r.note ?? '',
+    photoLocalUri: r.photo_local_uri ?? '',
+    photoPath: r.photo_path ?? '',
+    logTime: r.log_time,
+    operatorName: r.operator_name ?? '',
+    shiftTime: r.shift_time ?? '',
+    syncStatus: r.sync_status,
+  }));
+}
+
+export type QueuedTaskLog = {
+  taskId: number;
+  newStatus: string | null;
+  progressPct: number | null;
+  note: string;
+  photoLocalUri: string;
+  logTime: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/**
+ * Records progress and moves the cached task to match.
+ *
+ * The local task row is updated optimistically for the same reason the
+ * equipment row is: the operator just reported 60% and is looking at the
+ * screen. The server decides in the end -- tasks are master data and the next
+ * pull overwrites this row either way (doc 07 §7).
+ */
+export async function enqueueTaskLog(log: QueuedTaskLog): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+
+  await db.withTransactionAsync(async () => {
+    await db.runAsync(
+      `INSERT INTO maintenance_task_logs
+         (client_id, task_id, new_status, progress_pct, note, photo_local_uri,
+          operator_name, shift_group, shift_time, log_time, sync_status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_SYNC', ?)`,
+      clientId, log.taskId, log.newStatus, log.progressPct, log.note, log.photoLocalUri,
+      log.operatorName, log.shiftGroup, log.shiftTime, log.logTime,
+      new Date().toISOString(),
+    );
+
+    // COALESCE, not overwrite: a note-only log must not blank the task's status
+    // or reset its progress to zero.
+    if (log.newStatus !== null || log.progressPct !== null) {
+      await db.runAsync(
+        `UPDATE tasks SET status = COALESCE(?, status), progress_pct = COALESCE(?, progress_pct)
+          WHERE id = ?`,
+        log.newStatus, log.progressPct, log.taskId,
+      );
+    }
+  });
+
+  await refreshUnsent();
+  return clientId;
+}
+
+/** Task progress waiting to go, oldest first. Includes SYNC_ERROR — see pendingReadings. */
+export async function pendingTaskLogs(): Promise<TaskLogPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM maintenance_task_logs WHERE sync_status != 'SYNCED' ORDER BY created_at`,
+  );
+
+  return rows.map((r) => ({
+    clientId: r.client_id,
+    taskId: r.task_id,
+    newStatus: r.new_status ?? null,
+    progressPct: r.progress_pct ?? null,
+    note: r.note ?? '',
+    photoPath: r.photo_path ?? '',
+    logTime: r.log_time,
+    operatorName: r.operator_name ?? '',
+    shiftGroup: r.shift_group ?? '',
+    shiftTime: r.shift_time ?? '',
+  }));
+}
+
 /* ------------------------------------------------------------ shift summary */
 
 export type SummaryEntry = {
   key: string;
   at: string;
-  kind: 'READING' | 'ACTIVITY' | 'CLEANING' | 'EQUIPMENT';
+  kind: 'READING' | 'ACTIVITY' | 'CLEANING' | 'EQUIPMENT' | 'TASK';
   title: string;
   detail: string;
   operatorName: string;
@@ -617,6 +734,7 @@ export type ShiftSummary = {
   cleaning: number;
   unfinishedCleaning: number;
   equipmentChanges: number;
+  taskUpdates: number;
 };
 
 /**
@@ -672,6 +790,15 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
     shiftGroup, shiftTime, since,
   );
 
+  const taskProgress = await db.getAllAsync<any>(
+    `SELECT l.client_id, l.new_status, l.progress_pct, l.note, l.log_time,
+            l.operator_name, l.sync_status, t.title
+       FROM maintenance_task_logs l
+       LEFT JOIN tasks t ON t.id = l.task_id
+      WHERE l.shift_group = ? AND l.shift_time = ? AND l.log_time >= ?`,
+    shiftGroup, shiftTime, since,
+  );
+
   const entries: SummaryEntry[] = [
     ...readings.map((r) => ({
       key: `r:${r.client_id}`,
@@ -723,6 +850,19 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
       operatorName: s.operator_name,
       unsent: s.sync_status !== 'SYNCED',
     })),
+    ...taskProgress.map((l) => ({
+      key: `t:${l.client_id}`,
+      at: l.log_time,
+      kind: 'TASK' as const,
+      title: l.title ?? 'Task maintenance',
+      detail: [
+        l.progress_pct === null ? '' : `${l.progress_pct}%`,
+        l.new_status ? (STATUS_LABEL[l.new_status] ?? l.new_status) : '',
+        l.note,
+      ].filter(Boolean).join(' · '),
+      operatorName: l.operator_name,
+      unsent: l.sync_status !== 'SYNCED',
+    })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
   return {
@@ -732,6 +872,7 @@ export async function shiftSummary(shiftGroup: string, shiftTime: string): Promi
     cleaning: cleaning.length,
     unfinishedCleaning: cleaning.filter((c) => c.status !== 'DONE').length,
     equipmentChanges: equipmentChanges.length,
+    taskUpdates: taskProgress.length,
   };
 }
 
@@ -809,6 +950,11 @@ export type UnsentRecord = {
  *
  * Every field table, not only readings: a screen reporting "semua terkirim"
  * while an activity sits unsent is worse than no screen at all.
+ *
+ * The header badge counts straight from FIELD_TABLES, so a table added there
+ * but forgotten here produces exactly that contradiction — the badge says one
+ * record is waiting and this screen says nothing is. Adding a record type means
+ * adding it in both places.
  */
 export async function unsentRecords(): Promise<UnsentRecord[]> {
   const db = await getDb();
@@ -828,6 +974,22 @@ export async function unsentRecords(): Promise<UnsentRecord[]> {
   const cleaning = await db.getAllAsync<any>(
     `SELECT client_id, sync_status, error_message, created_at, location
        FROM cleaning_sessions WHERE sync_status != 'SYNCED'`,
+  );
+
+  const equipmentStatus = await db.getAllAsync<any>(
+    `SELECT l.client_id, l.sync_status, l.error_message, l.created_at, l.new_status,
+            e.tag_number
+       FROM equipment_status_logs l
+       LEFT JOIN equipment e ON e.id = l.equipment_id
+      WHERE l.sync_status != 'SYNCED'`,
+  );
+
+  const taskLogs = await db.getAllAsync<any>(
+    `SELECT l.client_id, l.sync_status, l.error_message, l.created_at,
+            l.progress_pct, l.new_status, t.title
+       FROM maintenance_task_logs l
+       LEFT JOIN tasks t ON t.id = l.task_id
+      WHERE l.sync_status != 'SYNCED'`,
   );
 
   const all: UnsentRecord[] = [
@@ -855,6 +1017,26 @@ export async function unsentRecords(): Promise<UnsentRecord[]> {
       status: c.sync_status,
       errorMessage: c.error_message,
       createdAt: c.created_at,
+    })),
+    ...equipmentStatus.map((s) => ({
+      clientId: s.client_id,
+      table: 'equipment_status_logs' as FieldTable,
+      // Tag in full, same rule as tank codes (doc 02 §1.1).
+      label: `${s.tag_number ?? 'Alat'} — ${STATUS_LABEL[s.new_status] ?? s.new_status}`,
+      status: s.sync_status,
+      errorMessage: s.error_message,
+      createdAt: s.created_at,
+    })),
+    ...taskLogs.map((l) => ({
+      clientId: l.client_id,
+      table: 'maintenance_task_logs' as FieldTable,
+      label: `${l.title ?? 'Task'} — ${[
+        l.progress_pct === null ? '' : `${l.progress_pct}%`,
+        l.new_status ? (STATUS_LABEL[l.new_status] ?? l.new_status) : '',
+      ].filter(Boolean).join(' · ') || 'catatan'}`,
+      status: l.sync_status,
+      errorMessage: l.error_message,
+      createdAt: l.created_at,
     })),
   ];
 
