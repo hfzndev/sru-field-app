@@ -143,16 +143,30 @@ export function evaluateReading(input: ReadingInput): Evaluation {
 
 export type DeviationSample = { levelMm: number; dcsLevelMm: number };
 
+/**
+ * What the suggestion was actually derived from.
+ *
+ *   DCS      — a DCS reading, corrected by this tank's recent drift. The SOP's
+ *              normal path (doc 02 §2.2).
+ *   HISTORY  — no DCS reading, so the level is estimated from recent *actual*
+ *              levels instead. Coarser, but it is a real measurement of this
+ *              tank rather than an assumption.
+ *   NONE     — no DCS and no history. There is nothing to derive a number from,
+ *              and the operator is asked for their own estimate.
+ */
+export type SuggestionBasis = 'DCS' | 'HISTORY' | 'NONE';
+
 export type TapeSuggestion = {
-  /** How far to lower the tape, in mm. */
-  suggestionMm: number;
-  /** Level the phone expects, DCS corrected by recent drift. */
-  estimatedLevelMm: number;
-  /** Mean of the samples used; 0 when there is no history. */
+  /** How far to lower the tape, in mm. Null when there is no honest basis. */
+  suggestionMm: number | null;
+  /** Level the phone expects. Null alongside a null suggestion. */
+  estimatedLevelMm: number | null;
+  /** Mean of the deviation samples used; 0 when there is no history. */
   averageDeviationMm: number;
   /** Deviations actually used, newest first — shown so the number is auditable. */
   samples: number[];
-  /** True when falling back to raw DCS with no history. */
+  basis: SuggestionBasis;
+  /** True when a DCS reading was given but there is no drift history yet. */
   isFallback: boolean;
 };
 
@@ -168,32 +182,67 @@ export type TapeSuggestion = {
  * Samples must come from one tank only. 93T-401 and 93T-402 drift differently
  * and pooling them corrupts the suggestion for both.
  *
- * With no history it falls back to raw DCS, which is exactly the guess an
- * operator would make unaided — never worse than not having the feature.
+ * **`dcsLevelMm` is nullable and that is load-bearing.** Doc 02 §2.3 lets an
+ * operator skip the DCS reading, and it is a normal thing to do — the screen is
+ * not always legible. Passing 0 for "not read" makes the arithmetic produce
+ * `height − averageDeviation`, i.e. very nearly the height of the tank: the
+ * operator lowers the tape to the floor, buries the bob far past the 99 mm the
+ * gauge can read, and the measurement is void. On 93T-401 with no history at
+ * all that number is 7953 mm, the full height, exactly. A nullable parameter is
+ * what stops a missing reading being silently read as a real one.
+ *
+ * With a DCS reading but no history it falls back to raw DCS, which is the
+ * guess an operator would make unaided — never worse than not having the
+ * feature. With neither, it returns no number rather than a misleading one.
  */
 export function suggestTapeLength(
   heightMm: number,
-  dcsLevelMm: number,
+  dcsLevelMm: number | null,
   samples: DeviationSample[],
 ): TapeSuggestion {
   assertFinite('heightMm', heightMm);
-  assertFinite('dcsLevelMm', dcsLevelMm);
 
-  const deviations = samples
-    .slice(0, DEVIATION_SAMPLE_SIZE)
-    .map((s) => s.levelMm - s.dcsLevelMm);
+  const recent = samples.slice(0, DEVIATION_SAMPLE_SIZE);
+  const deviations = recent.map((s) => s.levelMm - s.dcsLevelMm);
 
   const averageDeviationMm = deviations.length
     ? roundMm(deviations.reduce((a, b) => a + b, 0) / deviations.length)
     : 0;
 
+  const base = { averageDeviationMm, samples: deviations.map(roundMm) };
+
+  if (dcsLevelMm === null) {
+    if (recent.length === 0) {
+      return {
+        ...base, suggestionMm: null, estimatedLevelMm: null,
+        basis: 'NONE', isFallback: false,
+      };
+    }
+
+    // Recent actual levels, not deviations. A sulfur tank moves slowly, so the
+    // last few measured levels are a far better starting point than nothing —
+    // and unlike DCS they need no correction, being measurements of the thing
+    // itself.
+    const estimatedLevelMm = roundMm(
+      recent.reduce((sum, s) => sum + s.levelMm, 0) / recent.length,
+    );
+    return {
+      ...base,
+      suggestionMm: clampTape(heightMm - estimatedLevelMm, heightMm),
+      estimatedLevelMm,
+      basis: 'HISTORY',
+      isFallback: false,
+    };
+  }
+
+  assertFinite('dcsLevelMm', dcsLevelMm);
   const estimatedLevelMm = roundMm(dcsLevelMm + averageDeviationMm);
 
   return {
-    suggestionMm: roundMm(heightMm - estimatedLevelMm),
+    ...base,
+    suggestionMm: clampTape(heightMm - estimatedLevelMm, heightMm),
     estimatedLevelMm,
-    averageDeviationMm,
-    samples: deviations.map(roundMm),
+    basis: 'DCS',
     isFallback: deviations.length === 0,
   };
 }
@@ -206,8 +255,15 @@ export function suggestTapeLength(
  * operator tapping +100 four times should not end up being told to run the tape
  * through the floor.
  */
+function clampTape(tapeMm: number, heightMm: number): number {
+  // A tape longer than the tank runs through the floor, and a negative one is
+  // meaningless. validateReading rejects both, but only once the operator has
+  // already hauled the tape back up — so the number is never shown out of range
+  // in the first place.
+  const max = heightMm - 1;
+  return roundMm(Math.min(Math.max(tapeMm, 0), max));
+}
+
 export function adjustTape(currentMm: number, deltaMm: number, heightMm: number): number {
-  const next = currentMm + deltaMm;
-  const max = heightMm - 1; // must stay strictly under the tank height
-  return roundMm(Math.min(Math.max(next, 0), max));
+  return clampTape(currentMm + deltaMm, heightMm);
 }

@@ -132,6 +132,71 @@ describe('validation (doc 10 §2.1)', () => {
 
 /* ------------------------------------------------------------- suggestion */
 
+describe('tape suggestion when DCS was not read (doc 02 §2.3)', () => {
+  // Skipping the DCS reading is a normal thing to do, not an error path -- the
+  // screen is not always legible. It used to be passed through as 0, which made
+  // the suggestion come out at height - averageDeviation: on 93T-401 that is
+  // ~7866 mm with history and 7953 mm without, i.e. the tape goes to the floor
+  // and the bob is buried far past the 99 mm the gauge can read.
+
+  it('never suggests anything near the height of the tank', () => {
+    const withHistory = suggestTapeLength(T401, null, [{ levelMm: 5087, dcsLevelMm: 5000 }]);
+    const without = suggestTapeLength(T401, null, []);
+
+    expect(withHistory.suggestionMm).toBeLessThan(T401 / 2);
+    expect(without.suggestionMm).toBeNull();
+  });
+
+  it('estimates the level from recent actual levels instead', () => {
+    // Actual measured levels, not deviations: without a DCS reading there is
+    // nothing for a deviation to correct.
+    const s = suggestTapeLength(T401, null, [
+      { levelMm: 5100, dcsLevelMm: 5000 },
+      { levelMm: 5000, dcsLevelMm: 4900 },
+    ]);
+
+    expect(s.basis).toBe('HISTORY');
+    expect(s.estimatedLevelMm).toBe(5050);   // mean of 5100 and 5000
+    expect(s.suggestionMm).toBe(2903);       // 7953 − 5050
+  });
+
+  it('gives no number at all when there is no history either', () => {
+    const s = suggestTapeLength(T401, null, []);
+
+    expect(s.basis).toBe('NONE');
+    expect(s.suggestionMm).toBeNull();
+    expect(s.estimatedLevelMm).toBeNull();
+    // Not a fallback: a fallback still produces a number, and the whole point
+    // here is that none is honest.
+    expect(s.isFallback).toBe(false);
+  });
+
+  it('honours the five-sample cap like the DCS path', () => {
+    const samples = [
+      ...Array.from({ length: 5 }, () => ({ levelMm: 5000, dcsLevelMm: 4900 })),
+      { levelMm: 1000, dcsLevelMm: 900 },
+      { levelMm: 1000, dcsLevelMm: 900 },
+    ];
+    const s = suggestTapeLength(T401, null, samples);
+    expect(s.estimatedLevelMm).toBe(5000);   // the two oldest are ignored
+  });
+});
+
+describe('a suggestion always stays inside the tank', () => {
+  it('clamps a level below the tank floor', () => {
+    // A corrupt or wildly negative history must not produce a tape longer than
+    // the tank. validateReading would reject it, but only after the operator
+    // had already lowered it.
+    const s = suggestTapeLength(T401, 0, [{ levelMm: -9000, dcsLevelMm: 0 }]);
+    expect(s.suggestionMm).toBeLessThanOrEqual(T401 - 1);
+  });
+
+  it('never suggests a negative tape', () => {
+    const s = suggestTapeLength(T401, 99000, []);
+    expect(s.suggestionMm).toBe(0);
+  });
+});
+
 describe('tape suggestion (doc 02 §2.2)', () => {
   it('falls back to height − DCS with no history', () => {
     const s = suggestTapeLength(T401, 5000, []);

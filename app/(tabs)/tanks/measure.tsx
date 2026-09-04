@@ -39,6 +39,9 @@ export default function MeasureScreen() {
 
   const [dcsText, setDcsText] = useState('');
   const [dcsUnknown, setDcsUnknown] = useState(false);
+  // Only used when there is no DCS reading and no history — see the 'NONE'
+  // basis below. The operator's own guess is better than a fabricated one.
+  const [manualTapeText, setManualTapeText] = useState('');
   const [plannedTape, setPlannedTape] = useState(0);
   const [attempts, setAttempts] = useState(1);
 
@@ -68,12 +71,24 @@ export default function MeasureScreen() {
   if (!tank) return <Screen><Loading /></Screen>;
 
   const dcsValue = dcsUnknown ? null : Number(dcsText);
-  const suggestion = suggestTapeLength(tank.heightMm, dcsUnknown ? 0 : (Number(dcsText) || 0), samples);
+  // null, not 0. A zero DCS makes the suggestion come out at nearly the height
+  // of the tank and the operator lowers the bob to the floor.
+  const suggestion = suggestTapeLength(tank.heightMm, dcsValue, samples);
 
   /* ------------------------------------------------------------- step: DCS */
 
   if (step === 'dcs') {
-    const valid = dcsUnknown || (dcsText !== '' && Number.isFinite(Number(dcsText)));
+    const manualTape = Number(manualTapeText);
+    const manualValid = manualTapeText !== ''
+      && Number.isFinite(manualTape)
+      && manualTape > 0
+      && manualTape < tank.heightMm;
+
+    // Cannot continue without a tape length from somewhere: a derived one, or
+    // the operator's own.
+    const valid = dcsUnknown
+      ? (suggestion.suggestionMm !== null || manualValid)
+      : (dcsText !== '' && Number.isFinite(Number(dcsText)));
     return (
       <Screen>
         <StepHeader step={1} total={3} title={`${tank.code} — level DCS`} />
@@ -119,6 +134,39 @@ export default function MeasureScreen() {
           </Card>
         )}
 
+        {/* No DCS reading, but this tank has been measured before: the recent
+            actual levels are a real starting point. Coarser than the DCS path
+            and said so plainly, because the operator is the one who decides
+            whether to trust it. */}
+        {dcsUnknown && suggestion.basis === 'HISTORY' && (
+          <Card style={{ marginTop: space.lg }}>
+            <Text style={styles.cardLabel}>Perkiraan dari pengukuran terakhir</Text>
+            <Text style={styles.muted}>
+              Tanpa DCS, saran dihitung dari rata-rata level {suggestion.samples.length}{' '}
+              pengukuran terakhir: <Text style={styles.emphasis}>{mm(suggestion.estimatedLevelMm)}</Text>
+            </Text>
+            <Text style={styles.muted}>Lebih kasar daripada memakai DCS — bandul tetap hakim akhir.</Text>
+          </Card>
+        )}
+
+        {/* Nothing to derive a number from. Asking is the honest move: a
+            fabricated suggestion here is what sent the bob to the bottom. */}
+        {dcsUnknown && suggestion.basis === 'NONE' && (
+          <View style={{ marginTop: space.lg }}>
+            <Field
+              label="Perkiraan panjang meteran"
+              hint={`Tanpa DCS dan belum ada riwayat ${tank.code}, app tidak bisa menyarankan angka. Isi perkiraan sendiri — bisa disesuaikan ±50/±100 nanti.`}
+            >
+              <NumericInput
+                value={manualTapeText}
+                onChangeText={setManualTapeText}
+                placeholder="2900"
+                unit="mm"
+              />
+            </Field>
+          </View>
+        )}
+
         <View style={{ marginTop: space.lg }}>
           <Button
             title="Lanjut"
@@ -126,7 +174,7 @@ export default function MeasureScreen() {
             size="big"
             disabled={!valid}
             onPress={() => {
-              setPlannedTape(suggestion.suggestionMm);
+              setPlannedTape(suggestion.suggestionMm ?? adjustTape(manualTape, 0, tank.heightMm));
               setAttempts(1);
               setStep('lower');
             }}
@@ -148,16 +196,30 @@ export default function MeasureScreen() {
           <Text style={styles.bigNumber}>{mm(plannedTape)}</Text>
 
           {/* Transparency is required (doc 10 §4): an operator who cannot see
-              why it says this number will not trust it. */}
-          {!dcsUnknown && !suggestion.isFallback && (
+              why it says this number will not trust it. Every basis explains
+              itself — the DCS-unknown paths used to render either nothing at
+              all or "tinggi tangki − DCS", which was untrue when there was no
+              DCS to subtract. */}
+          {suggestion.basis === 'DCS' && !suggestion.isFallback && (
             <Text style={styles.reasoning}>
               DCS {mm(Number(dcsText))} · deviasi rata² {fmtDeviation(suggestion.averageDeviationMm)}
               {' '}dari {suggestion.samples.length} ukur → estimasi {mm(suggestion.estimatedLevelMm)}
             </Text>
           )}
-          {suggestion.isFallback && (
+          {suggestion.basis === 'DCS' && suggestion.isFallback && (
             <Text style={styles.reasoning}>
               Tanpa riwayat deviasi: tinggi tangki − DCS.
+            </Text>
+          )}
+          {suggestion.basis === 'HISTORY' && (
+            <Text style={styles.reasoning}>
+              Tanpa DCS · rata-rata level {suggestion.samples.length} ukur terakhir{' '}
+              {mm(suggestion.estimatedLevelMm)} → tinggi tangki − estimasi
+            </Text>
+          )}
+          {suggestion.basis === 'NONE' && (
+            <Text style={styles.reasoning}>
+              Perkiraan Anda sendiri — app belum punya DCS maupun riwayat {tank.code}.
             </Text>
           )}
 
