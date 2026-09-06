@@ -231,6 +231,12 @@ Two rules, and both are checked by the server rather than trusted:
 Drafts and prereleases are ignored, so a draft release is a safe place to write
 release notes before publishing.
 
+`gh` is not installed on the build machine by default (`winget install
+GitHub.cli`). Without it, the repo's Releases → *Draft a new release* page does
+the same job: create the tag `v0.4.0`, drag in the renamed APK, publish. The two
+rules above apply exactly the same way — the server cannot tell which route the
+release came from.
+
 **Check Devices in the admin web afterwards.** A release that breaks either rule
 is *ignored*, not rejected loudly: GitHub shows a green 200 delivery and nothing
 appears on the server. The delivery body in the repo's Settings → Webhooks →
