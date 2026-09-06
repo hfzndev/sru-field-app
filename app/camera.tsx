@@ -2,7 +2,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Button, Screen, Heading } from '@/components/ui';
+import { Button, Heading, Screen } from '@/components/ui';
 import { BIG_TOUCH_TARGET, colors, space, type } from '@/constants/theme';
 import { storePhoto } from '@/lib/photos';
 
@@ -142,36 +142,36 @@ export default function CameraScreen() {
 const SHUTTER = 88;
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
+  root: { flex: 1, backgroundColor: colors.cameraBg },
   camera: { flex: 1 },
   labelBar: {
     position: 'absolute', top: 0, left: 0, right: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)', paddingVertical: space.md, paddingHorizontal: space.lg,
+    backgroundColor: colors.cameraScrim, paddingVertical: space.md, paddingHorizontal: space.lg,
   },
-  labelText: { ...type.heading, color: '#fff', textAlign: 'center' },
+  labelText: { ...type.heading, color: colors.inkInverse, textAlign: 'center' },
   errorBar: {
     position: 'absolute', bottom: 200, left: space.lg, right: space.lg,
     backgroundColor: colors.danger, borderRadius: 6, padding: space.md,
   },
-  errorText: { ...type.body, color: '#fff' },
+  errorText: { ...type.body, color: colors.inkInverse },
   controls: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: '#000', paddingVertical: space.lg, paddingHorizontal: space.lg,
+    backgroundColor: colors.cameraBg, paddingVertical: space.lg, paddingHorizontal: space.lg,
   },
   cancel: {
     minWidth: 96, minHeight: BIG_TOUCH_TARGET,
     alignItems: 'flex-start', justifyContent: 'center',
   },
-  cancelText: { ...type.bodyStrong, color: '#fff' },
+  cancelText: { ...type.button, color: colors.inkInverse },
   shutter: {
     width: SHUTTER, height: SHUTTER, borderRadius: SHUTTER / 2,
-    backgroundColor: '#fff', borderWidth: 4, borderColor: 'rgba(255,255,255,0.45)',
+    backgroundColor: colors.cameraShutter, borderWidth: 4, borderColor: colors.cameraRing,
     alignItems: 'center', justifyContent: 'center',
   },
   shutterBusy: { opacity: 0.6 },
   shutterInner: {
     width: SHUTTER - 22, height: SHUTTER - 22, borderRadius: (SHUTTER - 22) / 2,
-    backgroundColor: '#fff', borderWidth: 2, borderColor: colors.border,
+    backgroundColor: colors.cameraShutter, borderWidth: 2, borderColor: colors.border,
   },
   denied: { ...type.body, color: colors.danger, marginBottom: space.md },
 });

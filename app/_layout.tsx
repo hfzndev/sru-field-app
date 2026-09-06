@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { HeaderBack } from '@/components/HeaderBack';
+import { loadIconFont } from '@/components/icon';
 import { colors, space, type } from '@/constants/theme';
 import { ensureInstallId, getDb } from '@/lib/db';
 
@@ -31,6 +32,13 @@ export default function RootLayout() {
       try {
         await getDb();
         await ensureInstallId();
+        // Icons ride the splash that storage already holds open, so the first
+        // frame never shows tofu in the tab bar. Its own catch, deliberately
+        // outside the failure branch below: a font that will not load is
+        // cosmetic and every icon in this app sits beside a label or carries
+        // an accessibilityLabel, whereas a blocked boot costs a shift of
+        // unrecorded work.
+        await loadIconFont().catch(() => {});
         if (!ignore) setReady(true);
       } catch (err) {
         // Surfaced rather than swallowed: if storage cannot open, the app
@@ -55,7 +63,7 @@ export default function RootLayout() {
             Aplikasi tidak bisa menyimpan catatan dengan aman. Jangan dipakai mencatat
             dulu — laporkan ke admin.
           </Text>
-          <Text style={{ ...type.caption, color: colors.muted, marginTop: space.lg }}>{failure}</Text>
+          <Text style={{ ...type.body, color: colors.muted, marginTop: space.lg }}>{failure}</Text>
         </View>
       </SafeAreaProvider>
     );

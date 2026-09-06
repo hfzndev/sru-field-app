@@ -1,7 +1,8 @@
 import { Stack, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Card, Chip, Empty, Loading, Screen } from '@/components/ui';
+import { ICON } from '@/components/icon';
+import { Card, Empty, Loading, Screen, StatusBadge } from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
 import { getDb } from '@/lib/db';
 import { deviation as fmtDeviation, formatDateTime, mm } from '@/lib/format';
@@ -82,7 +83,7 @@ export default function TankHistoryScreen() {
       <Screen>
         {rows.length === 0 ? (
           <Empty
-            icon="🛢️"
+            icon={ICON.emptyTank}
             title="Belum ada pengukuran"
             hint="Riwayat 7 hari terakhir muncul di sini setelah ada pengukuran atau sync."
           />
@@ -100,7 +101,7 @@ export default function TankHistoryScreen() {
                       needs no badge, and badging everything would drain the
                       meaning out of the ones that matter. */}
                   {row.syncStatus !== 'SYNCED' && (
-                    <Chip
+                    <StatusBadge
                       value={row.syncStatus}
                       label={row.syncStatus === 'SYNC_ERROR' ? 'Ditolak' : 'Belum terkirim'}
                     />
@@ -134,17 +135,17 @@ export default function TankHistoryScreen() {
 }
 
 const styles = StyleSheet.create({
-  count: { ...type.caption, color: colors.muted, marginBottom: space.sm },
+  count: { ...type.body, color: colors.muted, marginBottom: space.sm },
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   level: { ...type.title, color: colors.text },
-  when: { ...type.caption, color: colors.muted, marginTop: 2 },
+  when: { ...type.body, color: colors.muted, marginTop: 2 },
   deviationRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginTop: space.md, paddingTop: space.sm, borderTopWidth: 1, borderTopColor: colors.border,
   },
-  label: { ...type.caption, color: colors.muted },
+  label: { ...type.body, color: colors.muted },
   deviationValue: { ...type.bodyStrong, color: colors.accent },
-  detail: { ...type.caption, color: colors.muted, marginTop: space.sm },
-  note: { ...type.caption, color: colors.text, marginTop: space.xs },
-  by: { ...type.caption, color: colors.faint, marginTop: space.sm },
+  detail: { ...type.body, color: colors.muted, marginTop: space.sm },
+  note: { ...type.body, color: colors.text, marginTop: space.xs },
+  by: { ...type.body, color: colors.faint, marginTop: space.sm },
 });

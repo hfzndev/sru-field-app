@@ -1,7 +1,9 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Alert, Button, Card, Chip, Heading, Loading, Screen } from '@/components/ui';
+import {
+  Alert, Button, Card, EmptyInline, Heading, Loading, Screen, SectionTitle, StatusBadge,
+} from '@/components/ui';
 import { SHIFT_TIME_LABEL, STATUS_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDateTime } from '@/lib/format';
 import {
@@ -59,7 +61,7 @@ export default function EquipmentDetailScreen() {
 
       <Card>
         <View style={styles.head}>
-          <Chip value={item.status} />
+          <StatusBadge value={item.status} />
           {item.pendingStatus && <Text style={styles.unsent}>Belum terkirim</Text>}
         </View>
 
@@ -89,12 +91,10 @@ export default function EquipmentDetailScreen() {
         })}
       />
 
-      <Text style={styles.sectionTitle}>Riwayat di HP ini</Text>
+      <SectionTitle>Riwayat di HP ini</SectionTitle>
 
       {history.length === 0 ? (
-        <Text style={styles.empty}>
-          Belum ada perubahan status yang tercatat di HP ini.
-        </Text>
+        <EmptyInline>Belum ada perubahan status yang tercatat di HP ini.</EmptyInline>
       ) : (
         history.map((entry) => (
           <Card key={entry.clientId}>
@@ -131,8 +131,8 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   transition: { ...type.bodyStrong, color: colors.text, flex: 1 },
   note: { ...type.body, color: colors.text, marginTop: space.sm },
-  meta: { ...type.caption, color: colors.muted, marginTop: space.xs },
+  meta: { ...type.body, color: colors.muted, marginTop: space.xs },
   empty: { ...type.body, color: colors.muted, marginTop: space.sm },
   sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },
-  unsent: { ...type.caption, color: colors.warn },
+  unsent: { ...type.body, color: colors.warn },
 });

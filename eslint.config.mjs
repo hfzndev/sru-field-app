@@ -18,6 +18,27 @@ const config = [
       'no-var': 'error',
     },
   },
+  {
+    // Icon fonts are bundled per family. Importing from the package index makes
+    // Metro pull every family's TTF — roughly 3.5 MB into an APK operators
+    // download over plant signal — where the deep path pulls one 348 KB font.
+    // components/icon.tsx owns that single import; everything else goes through
+    // its Icon and ICON exports.
+    files: ['app/**/*.{ts,tsx}', 'components/**/*.{ts,tsx}', 'lib/**/*.{ts,tsx}'],
+    ignores: ['components/icon.tsx'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: '@expo/vector-icons',
+          message: 'Import { Icon, ICON } from "@/components/icon" instead — the package index bundles every icon font.',
+        }],
+        patterns: [{
+          group: ['@expo/vector-icons/*'],
+          message: 'Only components/icon.tsx may import an icon family directly. Use { Icon, ICON } from "@/components/icon".',
+        }],
+      }],
+    },
+  },
 ];
 
 export default config;

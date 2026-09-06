@@ -1,6 +1,8 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
+import { ICON, Icon } from '@/components/icon';
 import { Alert, Button, Field, Input, Screen } from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
 import { ApiError, OfflineError, login as apiLogin } from '@/lib/api';
@@ -50,6 +52,7 @@ export default function LoginScreen() {
   return (
     <Screen>
       <View style={styles.header}>
+        <Icon name={ICON.tank} size="lg" color={colors.accent} />
         <Text style={styles.brand}>SRU Field</Text>
         <Text style={styles.tagline}>Catat di lapangan, bukan diingat-ingat</Text>
       </View>
@@ -57,18 +60,17 @@ export default function LoginScreen() {
       <Alert error={error} />
 
       <Field label="Akun shift" hint="Satu akun dipakai bersama satu shift, bukan per orang.">
-        <View style={styles.shiftGrid}>
-          {SHIFTS.map((code) => (
-            <View key={code} style={styles.shiftCell}>
-              <Button
-                title={SHIFT_LABEL[code]}
-                variant={username === code ? 'primary' : 'secondary'}
-                onPress={() => setUsername(code)}
-                disabled={busy}
-              />
-            </View>
-          ))}
-        </View>
+        <Choice
+          layout="grid"
+          columns={2}
+          size="big"
+          value={username || null}
+          onChange={(v) => setUsername(v ?? '')}
+          disabled={busy}
+          accessibilityLabel="Akun shift"
+          testID="shift-account"
+          options={SHIFTS.map((code) => ({ value: code, label: SHIFT_LABEL[code] }))}
+        />
       </Field>
 
       <Field label="Password">
@@ -102,13 +104,13 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { marginTop: space.xxl, marginBottom: space.xl },
-  brand: { ...type.display, fontSize: 34, color: colors.text },
+  header: { marginTop: space.xxl, marginBottom: space.xl, gap: space.xs },
+  // type.display, unoverridden. This is a wordmark, not a measurement — the
+  // three ad-hoc display sizes this app carried are now one token each.
+  brand: { ...type.display, color: colors.text },
   tagline: { ...type.body, color: colors.muted, marginTop: space.xs },
-  shiftGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -space.xs },
-  shiftCell: { width: '50%', paddingHorizontal: space.xs, marginBottom: space.sm },
-  note: { ...type.caption, color: colors.muted, textAlign: 'center', marginTop: space.lg },
+  note: { ...type.body, color: colors.muted, textAlign: 'center', marginTop: space.lg },
   // Shown so a misconfigured build is obvious from the login screen rather than
   // presenting as "wrong password" against a server nobody meant to use.
-  server: { ...type.caption, color: colors.faint, textAlign: 'center', marginTop: space.xs },
+  server: { ...type.body, color: colors.faint, textAlign: 'center', marginTop: space.xs },
 });

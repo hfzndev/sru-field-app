@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
+import { ICON, Icon } from '@/components/icon';
 import { colors, radius, space, type } from '@/constants/theme';
 import { photoExists } from '@/lib/photos';
 import { fetchRemotePhoto } from '@/lib/remotePhotos';
@@ -53,7 +54,7 @@ export function PhotoThumb({ localUri, serverPath, label, size = 132 }: {
         />
       ) : (
         <View style={[styles.placeholder, { width: size, height: size }]}>
-          <Text style={styles.placeholderIcon}>🖼️</Text>
+          <Icon name={ICON.photo} size="lg" color={colors.faint} />
           <Text style={styles.placeholderText}>
             {serverPath ? 'Perlu sinyal' : 'Belum ada'}
           </Text>
@@ -64,13 +65,12 @@ export function PhotoThumb({ localUri, serverPath, label, size = 132 }: {
 }
 
 const styles = StyleSheet.create({
-  label: { ...type.caption, color: colors.muted, marginBottom: 4 },
+  label: { ...type.label, color: colors.muted, marginBottom: space.xs },
   image: { borderRadius: radius.sm, backgroundColor: colors.border },
   placeholder: {
     borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border,
     backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center',
     gap: space.xs,
   },
-  placeholderIcon: { fontSize: 24 },
-  placeholderText: { ...type.caption, color: colors.muted },
+  placeholderText: { ...type.body, color: colors.muted },
 });

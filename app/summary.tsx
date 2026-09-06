@@ -1,6 +1,7 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { ICON } from '@/components/icon';
 import { Card, Empty, Loading, Screen } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDate, formatTime } from '@/lib/format';
@@ -57,7 +58,7 @@ export default function SummaryScreen() {
   if (!session) {
     return (
       <Screen>
-        <Empty icon="🔒" title="Belum login" hint="Rangkuman mengikuti shift yang sedang login." />
+        <Empty icon={ICON.lock} title="Belum login" hint="Rangkuman mengikuti shift yang sedang login." />
       </Screen>
     );
   }
@@ -109,7 +110,7 @@ export default function SummaryScreen() {
 
       {data.entries.length === 0 ? (
         <Empty
-          icon="🕐"
+          icon={ICON.clock}
           title="Belum ada catatan shift ini"
           hint="Pengukuran, aktivitas, bersih-bersih, status alat dan progres task akan muncul di sini."
         />
@@ -154,9 +155,9 @@ const styles = StyleSheet.create({
   crew: { ...type.body, color: colors.muted },
   stats: { flexDirection: 'row' },
   stat: { flex: 1 },
-  statValue: { ...type.display, fontSize: 30, color: colors.text },
-  statLabel: { ...type.caption, color: colors.muted },
-  warn: { ...type.caption, color: colors.warn, marginTop: space.sm },
+  statValue: { ...type.metric, color: colors.text },
+  statLabel: { ...type.body, color: colors.muted },
+  warn: { ...type.body, color: colors.warn, marginTop: space.sm },
   sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },
   row: {
     flexDirection: 'row', gap: space.md, paddingVertical: space.md,
@@ -164,9 +165,9 @@ const styles = StyleSheet.create({
   },
   time: { ...type.bodyStrong, color: colors.text, width: 92 },
   body: { flex: 1 },
-  kind: { ...type.caption, fontWeight: '700' },
+  kind: { ...type.body, fontWeight: '700' },
   title: { ...type.bodyStrong, color: colors.text },
-  detail: { ...type.caption, color: colors.muted },
-  by: { ...type.caption, color: colors.muted, marginTop: 2 },
-  footer: { ...type.caption, color: colors.muted, marginTop: space.lg },
+  detail: { ...type.body, color: colors.muted },
+  by: { ...type.body, color: colors.muted, marginTop: 2 },
+  footer: { ...type.body, color: colors.muted, marginTop: space.lg },
 });

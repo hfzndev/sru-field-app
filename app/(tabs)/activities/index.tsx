@@ -1,8 +1,12 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Button, Card, Chip, Empty, Heading, Loading, Screen, Toast } from '@/components/ui';
-import { SHIFT_TIME_LABEL, TOUCH_TARGET, colors, space, type } from '@/constants/theme';
+import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
+import { ICON } from '@/components/icon';
+import {
+  Button, Empty, Heading, ListGroup, ListRow, Loading, Screen, SectionTitle, Toast, UnsentMark,
+} from '@/components/ui';
+import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDate, formatTime } from '@/lib/format';
 import { ActivityRow, listActivities } from '@/lib/queue';
 
@@ -73,70 +77,54 @@ export default function ActivitiesScreen() {
       />
 
       <View style={styles.filters}>
-        {FILTERS.map((option) => {
-          const active = filter === option.value;
-          return (
-            <Pressable
-              key={option.value}
-              onPress={() => setFilter(option.value)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              style={[styles.filter, active && styles.filterActive]}
-            >
-              <Text style={[styles.filterText, active && styles.filterTextActive]}>
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+        <Choice
+          layout="wrap"
+          value={filter}
+          onChange={(v) => setFilter((v ?? 'ALL') as Filter)}
+          accessibilityLabel="Saring aktivitas"
+          testID="activity-filter"
+          options={FILTERS.map((o) => ({ value: o.value, label: o.label }))}
+        />
       </View>
 
       {rows === null ? (
         <Loading />
       ) : visible.length === 0 ? (
         <Empty
-          icon="📝"
+          icon={ICON.activity}
           title={filter === 'ALL' ? 'Belum ada aktivitas' : 'Tidak ada di filter ini'}
           hint="Catat begitu selesai — jangan ditunda sampai akhir shift."
         />
       ) : (
         groups.map(([day, items]) => (
           <View key={day}>
-            <Text style={styles.day}>{day}</Text>
-            {items.map((row) => (
-              <Card key={row.clientId}>
-                <View style={styles.row}>
-                  <View style={styles.grow}>
-                    <View style={styles.tags}>
-                      <Text style={row.type === 'KONTRAKTOR' ? styles.tagKontraktor : styles.tagOperator}>
-                        {row.type === 'KONTRAKTOR' ? 'Kontraktor' : 'Operator'}
-                      </Text>
-                      <Text style={styles.time}>{formatTime(row.activityAt)}</Text>
-                    </View>
-
-                    <Text style={styles.description}>{row.description}</Text>
-
-                    <Text style={styles.meta}>
-                      {[
-                        row.contractorName,
-                        row.unitArea,
-                        row.operatorName,
-                        SHIFT_TIME_LABEL[row.shiftTime] ?? row.shiftTime,
-                      ].filter(Boolean).join(' · ')}
-                    </Text>
-                  </View>
-
-                  {/* Only the unsent state is worth a chip. Marking every synced
-                      row would make the exceptions harder to spot, not easier. */}
-                  {row.syncStatus !== 'SYNCED' && (
-                    <Chip
-                      value={row.syncStatus}
+            <SectionTitle count={items.length}>{day}</SectionTitle>
+            <ListGroup>
+              {items.map((row) => {
+                const kontraktor = row.type === 'KONTRAKTOR';
+                return (
+                  <ListRow
+                    key={row.clientId}
+                    icon={kontraktor ? ICON.contractor : ICON.operator}
+                    iconColor={kontraktor ? colors.warn : colors.accent}
+                    title={row.description}
+                    subtitle={kontraktor ? 'Kontraktor' : 'Operator'}
+                    meta={[
+                      row.contractorName,
+                      row.unitArea,
+                      row.operatorName,
+                      SHIFT_TIME_LABEL[row.shiftTime] ?? row.shiftTime,
+                    ].filter(Boolean).join(' · ')}
+                    right={<Text style={styles.time}>{formatTime(row.activityAt)}</Text>}
+                    chevron={false}
+                    footer={<UnsentMark
+                      status={row.syncStatus}
                       label={row.syncStatus === 'SYNC_ERROR' ? 'Ditolak' : 'Menunggu'}
-                    />
-                  )}
-                </View>
-              </Card>
-            ))}
+                    />}
+                  />
+                );
+              })}
+            </ListGroup>
           </View>
         ))
       )}
@@ -145,21 +133,6 @@ export default function ActivitiesScreen() {
 }
 
 const styles = StyleSheet.create({
-  filters: { flexDirection: 'row', gap: space.sm, marginTop: space.lg },
-  filter: {
-    minHeight: TOUCH_TARGET, paddingHorizontal: space.lg, justifyContent: 'center',
-    borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
-  },
-  filterActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  filterText: { ...type.bodyStrong, color: colors.text },
-  filterTextActive: { color: '#fff' },
-  day: { ...type.heading, color: colors.muted, marginTop: space.lg, marginBottom: space.sm },
-  row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
-  grow: { flex: 1 },
-  tags: { flexDirection: 'row', alignItems: 'center', gap: space.sm, marginBottom: 4 },
-  tagOperator: { ...type.caption, color: colors.accent, fontWeight: '700' },
-  tagKontraktor: { ...type.caption, color: colors.warn, fontWeight: '700' },
-  time: { ...type.caption, color: colors.muted },
-  description: { ...type.bodyStrong, color: colors.text },
-  meta: { ...type.caption, color: colors.muted, marginTop: 2 },
+  filters: { marginTop: space.lg },
+  time: { ...type.numeric, color: colors.muted },
 });

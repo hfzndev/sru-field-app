@@ -2,7 +2,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { PhotoThumb } from '@/components/PhotoThumb';
-import { Alert, Button, Card, Chip, Heading, Loading, Screen } from '@/components/ui';
+import { Alert, Button, Card, Heading, Loading, Screen, StatusBadge } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDateTime } from '@/lib/format';
 import { photoUriFor } from '@/lib/photos';
@@ -73,7 +73,7 @@ export default function CleaningSessionScreen() {
 
       <Card>
         <View style={styles.head}>
-          <Chip value={row.status} label={done ? 'Selesai' : 'Belum selesai'} />
+          <StatusBadge value={row.status} label={done ? 'Selesai' : 'Belum selesai'} />
           {row.syncStatus !== 'SYNCED' && (
             <Text style={styles.unsent}>
               {row.syncStatus === 'SYNC_ERROR' ? 'Ditolak server' : 'Belum terkirim'}
@@ -136,7 +136,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   note: { ...type.body, color: colors.text, marginTop: space.sm },
   photos: { flexDirection: 'row', gap: space.md, marginTop: space.md },
-  unsent: { ...type.caption, color: colors.warn },
-  hint: { ...type.caption, color: colors.muted, marginTop: space.sm },
+  unsent: { ...type.body, color: colors.warn },
+  hint: { ...type.body, color: colors.muted, marginTop: space.sm },
   finished: { ...type.body, color: colors.ok, marginTop: space.md },
 });

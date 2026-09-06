@@ -1,7 +1,8 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Card, Empty, Loading, Screen, Toast } from '@/components/ui';
+import { ICON } from '@/components/icon';
+import { Button, Card, Empty, Loading, Screen, Toast, UnsentMark } from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
 import { getDb } from '@/lib/db';
 import { formatTime, mm } from '@/lib/format';
@@ -70,7 +71,7 @@ export default function TanksScreen() {
       <Screen>
         {tanks.length === 0 ? (
           <Empty
-            icon="🛢️"
+            icon={ICON.emptyTank}
             title="Belum ada data tangki"
             hint="Sambungkan ke server lalu sync untuk mengambil daftar tangki."
           />
@@ -91,7 +92,10 @@ export default function TanksScreen() {
             </View>
 
             {tank.unsent > 0 && (
-              <Text style={styles.unsent}>⬆ {tank.unsent} belum terkirim</Text>
+              <UnsentMark
+                status="PENDING_SYNC"
+                label={`${tank.unsent} belum terkirim`}
+              />
             )}
 
             <View style={styles.actions}>
@@ -126,11 +130,10 @@ export default function TanksScreen() {
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'flex-start' },
   code: { ...type.title, color: colors.text },
-  meta: { ...type.caption, color: colors.muted, marginTop: 2 },
+  meta: { ...type.numeric, color: colors.muted, marginTop: 2 },
   lastWrap: { alignItems: 'flex-end' },
-  lastLabel: { ...type.caption, color: colors.muted },
-  lastValue: { ...type.bodyStrong, color: colors.text },
-  lastTime: { ...type.caption, color: colors.faint },
-  unsent: { ...type.caption, color: colors.warn, marginTop: space.sm, fontWeight: '600' },
+  lastLabel: { ...type.eyebrow, color: colors.muted, textTransform: 'uppercase' },
+  lastValue: { ...type.numericLarge, color: colors.text },
+  lastTime: { ...type.numeric, color: colors.faint },
   actions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
 });

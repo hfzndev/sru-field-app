@@ -1,14 +1,12 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
 import { PhotoThumb } from '@/components/PhotoThumb';
 import {
-  Alert, Button, Card, Chip, Field, Input, Loading, Screen,
+  Alert, Button, Card, EmptyInline, Field, Input, Loading, Screen, SectionTitle, StatusBadge,
 } from '@/components/ui';
-import {
-  BIG_TOUCH_TARGET, SHIFT_TIME_LABEL, STATUS_LABEL, TOUCH_TARGET,
-  colors, radius, space, type,
-} from '@/constants/theme';
+import { SHIFT_TIME_LABEL, STATUS_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDateTime } from '@/lib/format';
 import { photoUriFor } from '@/lib/photos';
 import {
@@ -137,7 +135,7 @@ export default function TaskDetailScreen() {
       <Card>
         <View style={styles.head}>
           <Text style={styles.title}>{task.title}</Text>
-          <Chip value={task.status} />
+          <StatusBadge value={task.status} />
         </View>
         <Text style={styles.sub}>
           {[task.equipmentTag, task.equipmentName].filter(Boolean).join(' · ')}
@@ -152,40 +150,33 @@ export default function TaskDetailScreen() {
       </Card>
 
       <Field label="Progres" hint="Kosongkan bila hanya menambah catatan.">
-        <View style={styles.steps}>
-          {STEPS.map((value) => (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityState={{ selected: progress === value }}
-              onPress={() => { setProgress(progress === value ? null : value); setError(''); }}
-              style={[styles.step, progress === value && styles.stepOn]}
-            >
-              <Text style={[styles.stepText, progress === value && styles.stepTextOn]}>
-                {value}%
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        {/* Discrete steps, never a slider: a slider held one-handed in a
+            glove stops at 63% when the operator meant 60 (doc 03 §3.5). */}
+        <Choice
+          layout="steps"
+          clearable
+          value={progress}
+          onChange={(v) => { setProgress(v); setError(''); }}
+          accessibilityLabel="Progres pekerjaan"
+          testID="task-progress"
+          options={STEPS.map((value) => ({ value, label: `${value}%` }))}
+        />
       </Field>
 
       <Field label="Status" hint="Kosongkan bila statusnya belum berubah.">
-        <View style={styles.statuses}>
-          {NEXT_STATUS.map((value) => (
-            <Pressable
-              key={value}
-              accessibilityRole="button"
-              accessibilityState={{ selected: status === value }}
-              onPress={() => { setStatus(status === value ? null : value); setError(''); }}
-              style={[styles.statusOption, status === value && styles.stepOn]}
-            >
-              <Text style={[styles.stepText, status === value && styles.stepTextOn]}>
-                {STATUS_LABEL[value] ?? value}
-                {task.status === value ? ' · sekarang' : ''}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <Choice
+          layout="stack"
+          clearable
+          value={status}
+          onChange={(v) => { setStatus(v); setError(''); }}
+          accessibilityLabel="Status pekerjaan"
+          testID="task-status"
+          options={NEXT_STATUS.map((value) => ({
+            value,
+            label: STATUS_LABEL[value] ?? value,
+            badge: task.status === value ? ' · sekarang' : undefined,
+          }))}
+        />
       </Field>
 
       <Field label="Catatan">
@@ -225,10 +216,10 @@ export default function TaskDetailScreen() {
         onPress={save}
       />
 
-      <Text style={styles.sectionTitle}>Riwayat di HP ini</Text>
+      <SectionTitle>Riwayat di HP ini</SectionTitle>
 
       {history.length === 0 ? (
-        <Text style={styles.empty}>Belum ada progres yang tercatat di HP ini.</Text>
+        <EmptyInline>Belum ada progres yang tercatat di HP ini.</EmptyInline>
       ) : (
         history.map((entry) => (
           <Card key={entry.clientId}>
@@ -283,37 +274,10 @@ export default function TaskDetailScreen() {
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   title: { ...type.bodyStrong, color: colors.text, flex: 1 },
-  sub: { ...type.caption, color: colors.muted, marginTop: 2 },
+  sub: { ...type.body, color: colors.muted, marginTop: 2 },
   note: { ...type.body, color: colors.text, marginTop: space.sm },
-  meta: { ...type.caption, color: colors.muted, marginTop: space.xs },
-  empty: { ...type.body, color: colors.muted, marginTop: space.sm },
-  sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },
-  unsent: { ...type.caption, color: colors.warn },
+  meta: { ...type.body, color: colors.faint, marginTop: space.xs },
+  unsent: { ...type.eyebrow, color: colors.warn, textTransform: 'uppercase' },
   photoRow: { flexDirection: 'row', marginTop: space.md },
-  photoLost: { ...type.caption, color: colors.warn, marginTop: space.sm },
-
-  steps: { flexDirection: 'row', gap: space.xs },
-  step: {
-    flex: 1,
-    minHeight: TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  statuses: { gap: space.sm },
-  statusOption: {
-    minHeight: BIG_TOUCH_TARGET,
-    justifyContent: 'center',
-    paddingHorizontal: space.md,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  stepOn: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  stepText: { ...type.bodyStrong, color: colors.text },
-  stepTextOn: { color: colors.accent },
+  photoLost: { ...type.body, color: colors.warn, marginTop: space.sm },
 });

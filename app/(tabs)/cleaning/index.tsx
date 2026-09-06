@@ -2,7 +2,10 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { PhotoThumb } from '@/components/PhotoThumb';
-import { Button, Card, Chip, Empty, Heading, Loading, Screen, Toast } from '@/components/ui';
+import { ICON } from '@/components/icon';
+import {
+  Button, Card, Empty, Heading, Loading, Screen, StatusBadge, Toast,
+} from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { formatDateTime } from '@/lib/format';
 import { CleaningRow, listCleaning } from '@/lib/queue';
@@ -55,7 +58,7 @@ export default function CleaningScreen() {
         <Loading />
       ) : rows.length === 0 ? (
         <Empty
-          icon="🧹"
+          icon={ICON.emptyClean}
           title="Belum ada dokumentasi"
           hint="Foto dulu sebelum dibersihkan — sesudahnya tidak bisa diulang."
         />
@@ -67,7 +70,7 @@ export default function CleaningScreen() {
           })}>
             <View style={styles.head}>
               <Text style={styles.location}>{row.location}</Text>
-              <Chip
+              <StatusBadge
                 value={row.status}
                 label={row.status === 'DONE' ? 'Selesai' : 'Belum selesai'}
               />
@@ -111,8 +114,8 @@ export default function CleaningScreen() {
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   location: { ...type.bodyStrong, color: colors.text, flex: 1 },
-  meta: { ...type.caption, color: colors.muted, marginTop: 2 },
+  meta: { ...type.body, color: colors.muted, marginTop: 2 },
   photos: { flexDirection: 'row', gap: space.md, marginTop: space.md },
   pending: { ...type.body, color: colors.warn, marginTop: space.md },
-  unsent: { ...type.caption, color: colors.warn, marginTop: space.sm },
+  unsent: { ...type.body, color: colors.warn, marginTop: space.sm },
 });

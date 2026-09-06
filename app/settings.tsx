@@ -3,7 +3,7 @@ import type { File } from 'expo-file-system';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Alert, Button, Card, Loading, Screen } from '@/components/ui';
+import { Alert, Button, Card, Loading, Reveal, Screen, SectionTitle } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { revoke } from '@/lib/api';
 import { API_URL, IS_LOCAL_API } from '@/lib/config';
@@ -12,7 +12,10 @@ import { formatDateTime } from '@/lib/format';
 import { Session, endSession, getSession, getToken } from '@/lib/session';
 import { refreshUnsent, useOnline, useUnsent } from '@/lib/status';
 import { isOnline } from '@/lib/sync';
-import { UpdateStatus, checkForUpdate, downloadUpdate, installApk, sweepOldApks } from '@/lib/update';
+import {
+  UpdateStatus, downloadUpdate, installApk, refreshUpdateStatus, resetUpdateStatus,
+  sweepOldApks, useUpdateStatus,
+} from '@/lib/update';
 
 /**
  * About, account, and local diagnostics (doc 03 §5).
@@ -38,7 +41,8 @@ export default function SettingsScreen() {
   const [info, setInfo] = useState<Info | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [leaving, setLeaving] = useState(false);
-  const [update, setUpdate] = useState<UpdateStatus>({ state: 'UNKNOWN' });
+  const update = useUpdateStatus();
+  const [checking, setChecking] = useState(false);
 
   useFocusEffect(useCallback(() => {
     let ignore = false;
@@ -57,12 +61,29 @@ export default function SettingsScreen() {
       setInfo({ session, lastSync });
 
       // After the screen has drawn, not before: the check needs the network and
-      // this screen must render instantly with no signal.
-      const status = await checkForUpdate();
-      if (!ignore) setUpdate(status);
+      // this screen must render instantly with no signal. Unforced, so opening
+      // Pengaturan twice in a shift does not cost two round trips.
+      refreshUpdateStatus().catch(() => {});
     })();
     return () => { ignore = true; };
   }, []));
+
+  /**
+   * The "Periksa update" button.
+   *
+   * Forced, unlike the check on focus. The operator has been told by someone —
+   * the control room, usually — that there is a new build, and showing them a
+   * cached "sudah versi terbaru" from hours ago would make the app the thing
+   * that is wrong rather than the thing that helps.
+   */
+  async function checkNow() {
+    setChecking(true);
+    try {
+      await refreshUpdateStatus(true);
+    } finally {
+      setChecking(false);
+    }
+  }
 
   /**
    * Signs out for real.
@@ -86,6 +107,9 @@ export default function SettingsScreen() {
         }
       }
       await endSession();
+      // The check is made with this operator's token; the next one on this
+      // handset must not inherit its verdict.
+      resetUpdateStatus();
       await refreshUnsent();
       router.replace('/login');
     } finally {
@@ -114,9 +138,14 @@ export default function SettingsScreen() {
         <Alert error="Aplikasi ini menunjuk ke server lokal, bukan server lapangan. Jangan dipakai untuk mencatat sungguhan." />
       )}
 
-      <UpdateCard status={update} currentVersion={appVersion} />
+      <UpdateCard
+        status={update}
+        currentVersion={appVersion}
+        checking={checking}
+        onCheck={checkNow}
+      />
 
-      <Text style={styles.section}>Akun shift</Text>
+      <SectionTitle>Akun shift</SectionTitle>
       <Card>
         {!info ? <Loading /> : session ? (
           <>
@@ -132,7 +161,7 @@ export default function SettingsScreen() {
         )}
       </Card>
 
-      <Text style={styles.section}>Penyimpanan HP</Text>
+      <SectionTitle>Penyimpanan HP</SectionTitle>
       {!db ? <Loading /> : (
         <Card>
           <Row label="Versi skema" value={`v${db.schemaVersion}`} />
@@ -151,7 +180,7 @@ export default function SettingsScreen() {
         </Card>
       )}
 
-      <Text style={styles.section}>Identitas HP</Text>
+      <SectionTitle>Identitas HP</SectionTitle>
       <Card>
         <Row label="ID instalasi" value={installId ? `${installId.slice(0, 8)}…` : '—'} />
         <Row label="Dipasang" value={formatDateTime(firstOpened)} />
@@ -167,6 +196,7 @@ export default function SettingsScreen() {
           onPress={() => (session ? setConfirming(true) : router.replace('/login'))}
         />
       ) : (
+        <Reveal>
         <Card>
           <Text style={styles.confirmTitle}>Keluar dari {session?.shiftName}?</Text>
           {unsent > 0 && (
@@ -189,6 +219,7 @@ export default function SettingsScreen() {
             </View>
           </View>
         </Card>
+        </Reveal>
       )}
 
       <Text style={styles.note}>
@@ -221,24 +252,37 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * The update banner (doc 09 §3 lapis 3).
+ * The update card (doc 09 §3 lapis 3).
  *
- * Only ever shown when there is genuinely something newer. UNKNOWN — which is
- * what being out of signal returns — renders nothing at all: an operator in a
- * dead spot must not be told the app failed at something they did not ask for.
+ * Always on screen, unlike the banner it replaces. That card only appeared when
+ * a newer build existed, which made "apakah HP saya sudah terbaru?" a question
+ * with no answer anywhere in the app: nothing shown could mean up to date, no
+ * signal, or a check that never ran, and an operator cannot tell those apart
+ * from an absence. Now each of them says which one it is, and there is a button
+ * to ask again.
+ *
+ * A pending update is styled as a warning, not as news. The plant runs four
+ * handsets with no store behind them, so a phone left on an old build keeps
+ * whatever bugs that build had, and it stays that way until somebody
+ * deliberately updates it.
  *
  * Downloading and installing are two separate taps on purpose. The download is
  * ~70MB and finishes whenever it finishes; installing interrupts whatever the
  * operator is doing and hands them to the system installer. Bundling them
  * would mean a tap in the control room ambushes them in the field.
  */
-function UpdateCard({ status, currentVersion }: { status: UpdateStatus; currentVersion: string }) {
+function UpdateCard({ status, currentVersion, checking, onCheck }: {
+  status: UpdateStatus;
+  currentVersion: string;
+  checking: boolean;
+  onCheck: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [ready, setReady] = useState<File | null>(null);
   const [error, setError] = useState('');
 
-  if (status.state !== 'AVAILABLE') return null;
+  const outdated = status.state === 'AVAILABLE';
 
   async function download() {
     if (status.state !== 'AVAILABLE') return;
@@ -259,50 +303,68 @@ function UpdateCard({ status, currentVersion }: { status: UpdateStatus; currentV
 
   return (
     <>
-      <Text style={styles.section}>Update aplikasi</Text>
-      <Card>
+      <SectionTitle>Update aplikasi</SectionTitle>
+      <Card style={outdated ? styles.updateCardWarn : undefined}>
+        {outdated && (
+          <Text style={styles.updateWarnTitle}>
+            Versi aplikasi di HP ini sudah lama
+          </Text>
+        )}
+
         <Row label="Versi di HP" value={currentVersion} />
-        <Row label="Versi di server" value={status.version} />
+        {status.state === 'AVAILABLE' && <Row label="Versi di server" value={status.version} />}
         {/* One decimal, not a round number: a small build shown as "0 MB"
             reads as a broken download rather than a quick one. */}
-        {status.bytes > 0 && (
+        {status.state === 'AVAILABLE' && status.bytes > 0 && (
           <Row label="Ukuran" value={`${(status.bytes / 1024 / 1024).toFixed(1)} MB`} />
         )}
 
         <Alert error={error || null} />
 
-        {ready ? (
-          <>
-            <Button
-              title="Pasang sekarang"
-              variant="primary"
-              onPress={async () => {
-                try {
-                  await installApk(ready);
-                } catch {
-                  setError('Tidak bisa membuka installer. Buka file APK-nya secara manual.');
-                }
-              }}
-            />
-            <Text style={styles.updateNote}>
-              Android akan meminta izin &quot;install aplikasi tidak dikenal&quot; sekali.
-              Catatan yang tersimpan di HP tidak hilang saat update.
-            </Text>
-          </>
+        {status.state === 'AVAILABLE' ? (
+          ready ? (
+            <>
+              <Button
+                title="Pasang sekarang"
+                variant="primary"
+                onPress={async () => {
+                  try {
+                    await installApk(ready);
+                  } catch {
+                    setError('Tidak bisa membuka installer. Buka file APK-nya secara manual.');
+                  }
+                }}
+              />
+              <Text style={styles.updateNote}>
+                Android akan meminta izin &quot;install aplikasi tidak dikenal&quot; sekali.
+                Catatan yang tersimpan di HP tidak hilang saat update.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Button
+                title={busy
+                  ? (progress > 0 ? `Mengunduh… ${Math.round(progress * 100)}%` : 'Mengunduh…')
+                  : 'Unduh update'}
+                variant="primary"
+                busy={busy}
+                onPress={download}
+              />
+              <Text style={styles.updateNote}>
+                Unduh saat sinyal bagus. Catatan yang belum terkirim tidak hilang saat update —
+                tapi kirim dulu kalau bisa.
+              </Text>
+            </>
+          )
         ) : (
           <>
             <Button
-              title={busy
-                ? (progress > 0 ? `Mengunduh… ${Math.round(progress * 100)}%` : 'Mengunduh…')
-                : 'Unduh update'}
-              variant="primary"
-              busy={busy}
-              onPress={download}
+              title={checking ? 'Memeriksa…' : 'Periksa update'}
+              variant="secondary"
+              busy={checking}
+              onPress={onCheck}
             />
-            <Text style={styles.updateNote}>
-              Unduh saat sinyal bagus. Catatan yang belum terkirim tidak hilang saat update —
-              tapi kirim dulu kalau bisa.
-            </Text>
+            <Text style={styles.updateNote}>{HINT[status.state]}</Text>
           </>
         )}
       </Card>
@@ -310,15 +372,31 @@ function UpdateCard({ status, currentVersion }: { status: UpdateStatus; currentV
   );
 }
 
+/**
+ * What each non-update state means, in the operator's terms.
+ *
+ * UNKNOWN is deliberately not phrased as a failure. Being out of signal is the
+ * normal case out in the plant, and an operator must not be handed a problem to
+ * solve for a check they did not ask for — it says what to do, not what broke.
+ */
+const HINT: Record<Exclude<UpdateStatus['state'], 'AVAILABLE'>, string> = {
+  CURRENT: 'Aplikasi sudah versi terbaru.',
+  NONE: 'Server belum punya build untuk dibagikan.',
+  UNKNOWN: 'Belum bisa memeriksa ke server. Coba lagi saat ada sinyal.',
+};
+
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: space.sm, gap: space.md },
   label: { ...type.body, color: colors.muted, flexShrink: 1 },
   value: { ...type.bodyStrong, color: colors.text, flexShrink: 1, textAlign: 'right' },
-  section: { ...type.heading, color: colors.text, marginTop: space.md, marginBottom: space.sm },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: space.sm },
-  updateNote: { ...type.caption, color: colors.muted, marginTop: space.sm },
+  updateNote: { ...type.body, color: colors.muted, marginTop: space.sm },
+  // Bordered, not filled: the card sits among four others that all look alike,
+  // and a tint alone is not something an operator reads as "act on this".
+  updateCardWarn: { borderColor: colors.warn, borderWidth: 2 },
+  updateWarnTitle: { ...type.bodyStrong, color: colors.warn, marginBottom: space.sm },
   confirmTitle: { ...type.bodyStrong, color: colors.text, marginBottom: space.sm },
   confirmRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
   warn: { ...type.body, color: colors.danger, marginBottom: space.sm },
-  note: { ...type.caption, color: colors.muted, marginTop: space.lg },
+  note: { ...type.body, color: colors.muted, marginTop: space.lg },
 });

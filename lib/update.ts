@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { getContentUriAsync } from 'expo-file-system/legacy';
 import * as IntentLauncher from 'expo-intent-launcher';
+import { useSyncExternalStore } from 'react';
 import { Platform } from 'react-native';
 import { API_URL, APP_VERSION } from './config';
 import { OfflineError } from './api';
@@ -91,6 +92,115 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/* ------------------------------------------------------- shared update state
+
+   The answer to "is this handset behind" is needed in two places — the
+   dashboard, which warns, and Pengaturan, which acts on it. It is held here for
+   the same reason the unsent count is held in status.ts: two screens computing
+   it separately will eventually disagree, and a dashboard saying nothing while
+   Pengaturan offers an update is exactly the kind of contradiction that makes
+   an operator stop believing either of them.                                  */
+
+const listeners = new Set<(status: UpdateStatus) => void>();
+let lastStatus: UpdateStatus = { state: 'UNKNOWN' };
+let lastCheckedAt = 0;
+let inFlight: Promise<UpdateStatus> | null = null;
+
+/**
+ * How long a result is reused before the network is asked again.
+ *
+ * A build is published a few times a month at most, so checking on every screen
+ * focus would spend a plant handset's battery and its 2G link rediscovering an
+ * answer that almost never changes. Long enough to be quiet, short enough that
+ * a build published at the start of a shift is offered during it.
+ */
+const CHECK_TTL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Refreshes the shared status, or returns the cached one.
+ *
+ * `force` is what the "Periksa update" button passes: an operator who has just
+ * been told a build exists and taps to look for it must see the network
+ * actually being asked, not a cached "sudah terbaru" from four hours ago.
+ *
+ * Concurrent callers share one request. Both screens refresh on focus, and
+ * moving between them must not stack up HEAD requests on a link that may take
+ * ten seconds to answer one.
+ */
+export function refreshUpdateStatus(force = false): Promise<UpdateStatus> {
+  if (inFlight) return inFlight;
+
+  const fresh = Date.now() - lastCheckedAt < CHECK_TTL_MS;
+  if (!force && fresh && lastStatus.state !== 'UNKNOWN') {
+    return Promise.resolve(lastStatus);
+  }
+
+  inFlight = checkForUpdate().then((status) => {
+    // UNKNOWN means the question could not be asked — no signal, not logged in.
+    // The previous answer is kept, so an operator who walks into a dead spot
+    // does not watch a genuine "update tersedia" warning vanish, and the
+    // timestamp is left alone so the next focus retries rather than caching a
+    // non-answer for six hours.
+    if (status.state !== 'UNKNOWN') {
+      lastCheckedAt = Date.now();
+      publish(status);
+    }
+    return lastStatus;
+  }).finally(() => {
+    inFlight = null;
+  });
+
+  return inFlight;
+}
+
+/**
+ * Stores a status and wakes subscribers, but only when it actually differs.
+ *
+ * Identity is the change signal for useSyncExternalStore, so replacing an
+ * equivalent status with a fresh object would re-render both screens on every
+ * check — several times a shift, for nothing.
+ */
+function publish(status: UpdateStatus): void {
+  if (same(status, lastStatus)) return;
+  lastStatus = status;
+  listeners.forEach((fn) => fn(lastStatus));
+}
+
+function same(a: UpdateStatus, b: UpdateStatus): boolean {
+  if (a.state !== b.state) return false;
+  return a.state !== 'AVAILABLE' || a.version === (b as { version: string }).version;
+}
+
+function subscribe(onChange: () => void): () => void {
+  listeners.add(onChange);
+  return () => { listeners.delete(onChange); };
+}
+
+/**
+ * Live update status, shared by every subscriber. Never triggers a check.
+ *
+ * useSyncExternalStore rather than the useState/useEffect pair the rest of the
+ * app uses for this shape: a screen that mounts between a refresh finishing and
+ * its own subscription being registered would otherwise render the old status
+ * and never be told, which for this store means the warning silently not
+ * appearing. `lastStatus` is replaced wholesale on every change, so identity
+ * comparison is enough to drive it.
+ */
+export function useUpdateStatus(): UpdateStatus {
+  return useSyncExternalStore(subscribe, () => lastStatus, () => lastStatus);
+}
+
+/**
+ * Forgets the cached answer.
+ *
+ * Called on sign-out: the check is per-token, and the next operator on this
+ * handset must not inherit a stale verdict taken under someone else's session.
+ */
+export function resetUpdateStatus(): void {
+  lastCheckedAt = 0;
+  publish({ state: 'UNKNOWN' });
 }
 
 function apkDirectory(): Directory {

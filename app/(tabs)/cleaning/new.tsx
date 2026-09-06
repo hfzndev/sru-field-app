@@ -128,5 +128,5 @@ export default function NewCleaningScreen() {
 }
 
 const styles = StyleSheet.create({
-  note: { ...type.caption, color: colors.muted, marginTop: space.lg },
+  note: { ...type.body, color: colors.muted, marginTop: space.lg },
 });

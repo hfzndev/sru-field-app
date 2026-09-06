@@ -1,11 +1,12 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Card, Chip, Heading, Loading, Screen } from '@/components/ui';
+import { Button, Card, Heading, Loading, Screen, StatusBadge } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { isoStartOfWibToday } from '@/lib/format';
 import { getDb, unsentCount } from '@/lib/db';
 import { Session, getSession } from '@/lib/session';
+import { refreshUpdateStatus, useUpdateStatus } from '@/lib/update';
 
 /**
  * Dashboard (doc 03 §5).
@@ -21,6 +22,7 @@ type Summary = { session: Session | null; unsent: number; readingsToday: number 
 
 export default function DashboardScreen() {
   const [data, setData] = useState<Summary | null>(null);
+  const update = useUpdateStatus();
 
   // Refreshes on focus rather than mount: the counts change while the operator
   // is off recording, and a stale "0 belum terkirim" is the one thing this
@@ -41,6 +43,13 @@ export default function DashboardScreen() {
           isoStartOfWibToday(),
         );
         if (!ignore) setData({ session, unsent, readingsToday: row?.n ?? 0 });
+
+        // Fired after the local reads, never awaited before them: this screen
+        // must draw from SQLite alone with no signal, and a 10s HEAD request
+        // in front of that would make the dashboard feel broken in a dead
+        // spot. Throttled inside refreshUpdateStatus, so returning to Beranda
+        // twenty times a shift costs one round trip.
+        refreshUpdateStatus().catch(() => {});
       })();
       return () => { ignore = true; };
     }, []),
@@ -58,9 +67,26 @@ export default function DashboardScreen() {
     <Screen>
       <Heading sub={subtitle}>Beranda</Heading>
 
+      {/* The outdated-version warning (doc 09 §3 lapis 3).
+          It lives here as well as in Pengaturan because nobody opens
+          Pengaturan. With no store behind these four handsets, a phone left on
+          an old build keeps that build's bugs until someone deliberately
+          updates it, and the only screen an operator reliably sees is this one.
+          Shown only for AVAILABLE — CURRENT, NONE and UNKNOWN all render
+          nothing, so a dead spot never turns into a warning about itself. */}
+      {update.state === 'AVAILABLE' && (
+        <Card onPress={() => router.push('/settings')} style={styles.updateCard}>
+          <Text style={styles.updateTitle}>Versi aplikasi sudah lama</Text>
+          <Text style={styles.updateBody}>
+            Ada versi {update.version} di server. Ketuk untuk membuka Pengaturan dan update
+            saat sinyal bagus.
+          </Text>
+        </Card>
+      )}
+
       <Card>
         <View style={styles.badgeRow}>
-          <Chip
+          <StatusBadge
             value={unsent === 0 ? 'SYNCED' : 'PENDING_SYNC'}
             label={unsent === 0 ? 'Semua terkirim' : `${unsent} belum terkirim`}
           />
@@ -115,10 +141,16 @@ export default function DashboardScreen() {
 
 const styles = StyleSheet.create({
   badgeRow: { flexDirection: 'row', marginBottom: space.sm },
-  hint: { ...type.caption, color: colors.muted },
+  // Bordered rather than tinted: this sits directly above the "semua terkirim"
+  // card, and a filled warning block there competes with the one number this
+  // screen exists to show.
+  updateCard: { borderColor: colors.warn, borderWidth: 2 },
+  updateTitle: { ...type.bodyStrong, color: colors.warn, marginBottom: space.xs },
+  updateBody: { ...type.body, color: colors.text },
+  hint: { ...type.body, color: colors.muted },
   sectionTitle: { ...type.heading, color: colors.text, marginBottom: space.sm, marginTop: space.sm },
   statRow: { flexDirection: 'row' },
   stat: { flex: 1 },
-  statNumber: { ...type.display, fontSize: 32, color: colors.text },
-  statLabel: { ...type.caption, color: colors.muted },
+  statNumber: { ...type.metric, color: colors.text },
+  statLabel: { ...type.body, color: colors.muted },
 });

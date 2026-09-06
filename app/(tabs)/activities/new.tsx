@@ -1,8 +1,10 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
+import { ICON } from '@/components/icon';
 import { Alert, Button, Field, Input, Loading, Screen } from '@/components/ui';
-import { BIG_TOUCH_TARGET, TOUCH_TARGET, colors, space, type } from '@/constants/theme';
+import { colors, space, type } from '@/constants/theme';
 import { getDb } from '@/lib/db';
 import { formatTime } from '@/lib/format';
 import { enqueueActivity } from '@/lib/queue';
@@ -135,24 +137,18 @@ export default function NewActivityScreen() {
       <Alert error={error || null} />
 
       <Field label="Jenis aktivitas">
-        <View style={styles.kinds}>
-          {(['OPERATOR', 'KONTRAKTOR'] as Kind[]).map((option) => {
-            const active = kind === option;
-            return (
-              <Pressable
-                key={option}
-                onPress={() => setKind(option)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                style={[styles.kind, active && styles.kindActive]}
-              >
-                <Text style={[styles.kindText, active && styles.kindTextActive]}>
-                  {option === 'OPERATOR' ? 'Operator' : 'Kontraktor'}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Choice
+          layout="segments"
+          size="big"
+          value={kind}
+          onChange={(v) => setKind((v ?? kind) as Kind)}
+          accessibilityLabel="Jenis aktivitas"
+          testID="activity-kind"
+          options={[
+            { value: 'OPERATOR', label: 'Operator', icon: ICON.operator },
+            { value: 'KONTRAKTOR', label: 'Kontraktor', icon: ICON.contractor },
+          ]}
+        />
       </Field>
 
       {kind === 'KONTRAKTOR' && (
@@ -162,20 +158,14 @@ export default function NewActivityScreen() {
         >
           {contractors.length > 0 && (
             <View style={styles.picks}>
-              {contractors.map((name) => {
-                const active = contractorName === name;
-                return (
-                  <Pressable
-                    key={name}
-                    onPress={() => setContractorName(name)}
-                    accessibilityRole="button"
-                    accessibilityState={{ selected: active }}
-                    style={[styles.pick, active && styles.pickActive]}
-                  >
-                    <Text style={[styles.pickText, active && styles.pickTextActive]}>{name}</Text>
-                  </Pressable>
-                );
-              })}
+              <Choice
+                layout="wrap"
+                value={contractors.includes(contractorName) ? contractorName : null}
+                onChange={(v) => setContractorName(v ?? '')}
+                accessibilityLabel="Nama kontraktor"
+                testID="contractor"
+                options={contractors.map((name) => ({ value: name, label: name }))}
+              />
             </View>
           )}
           <Input
@@ -204,22 +194,15 @@ export default function NewActivityScreen() {
 
       <Field label="Waktu kejadian">
         <Text style={styles.clock}>{displayedAt ? formatTime(displayedAt) : '—'}</Text>
-        <View style={styles.picks}>
-          {NUDGES.map((nudge) => {
-            const active = minutesAgo === nudge.minutes;
-            return (
-              <Pressable
-                key={nudge.minutes}
-                onPress={() => setMinutesAgo(active ? 0 : nudge.minutes)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                style={[styles.pick, active && styles.pickActive]}
-              >
-                <Text style={[styles.pickText, active && styles.pickTextActive]}>{nudge.label}</Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Choice
+          layout="wrap"
+          clearable
+          value={minutesAgo || null}
+          onChange={(v) => setMinutesAgo(v ?? 0)}
+          accessibilityLabel="Geser waktu kejadian"
+          testID="time-nudge"
+          options={NUDGES.map((n) => ({ value: n.minutes, label: n.label }))}
+        />
       </Field>
 
       <Button
@@ -239,22 +222,7 @@ export default function NewActivityScreen() {
 }
 
 const styles = StyleSheet.create({
-  kinds: { flexDirection: 'row', gap: space.sm },
-  kind: {
-    flex: 1, minHeight: BIG_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center',
-    borderRadius: 8, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
-  },
-  kindActive: { backgroundColor: colors.accent, borderColor: colors.accent },
-  kindText: { ...type.bodyStrong, color: colors.text },
-  kindTextActive: { color: '#fff' },
-  picks: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm, marginBottom: space.sm },
-  pick: {
-    minHeight: TOUCH_TARGET, paddingHorizontal: space.lg, justifyContent: 'center',
-    borderRadius: 999, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface,
-  },
-  pickActive: { backgroundColor: colors.accentSoft, borderColor: colors.accent },
-  pickText: { ...type.body, color: colors.text },
-  pickTextActive: { color: colors.accent, fontWeight: '600' },
-  clock: { ...type.title, color: colors.text, marginBottom: space.sm },
-  note: { ...type.caption, color: colors.muted, marginTop: space.lg },
+  picks: { marginBottom: space.sm },
+  clock: { ...type.metric, color: colors.text, marginBottom: space.sm },
+  note: { ...type.body, color: colors.muted, marginTop: space.lg },
 });

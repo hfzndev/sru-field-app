@@ -1,6 +1,7 @@
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
 import { Alert, Button, Field, Input, Loading, Screen } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { getDb } from '@/lib/db';
@@ -58,17 +59,14 @@ export default function ShiftStartScreen() {
       <Alert error={error} />
 
       <Field label="Waktu shift" hint="Disarankan dari jam sekarang — ubah bila perlu.">
-        <View style={styles.row}>
-          {SLOTS.map((value) => (
-            <View key={value} style={styles.cell}>
-              <Button
-                title={SHIFT_TIME_LABEL[value]}
-                variant={slot === value ? 'primary' : 'secondary'}
-                onPress={() => setSlot(value)}
-              />
-            </View>
-          ))}
-        </View>
+        <Choice
+          layout="segments"
+          value={slot}
+          onChange={(v) => setSlot(v ?? slot)}
+          accessibilityLabel="Waktu shift"
+          testID="shift-slot"
+          options={SLOTS.map((value) => ({ value, label: SHIFT_TIME_LABEL[value] }))}
+        />
       </Field>
 
       <Field
@@ -80,16 +78,15 @@ export default function ShiftStartScreen() {
         {/* The roster is a shortcut, never a constraint: doc 01 §8 expects
             operators to type a name until an admin fills the list in. */}
         {crew.length > 0 && (
-          <View style={styles.crewWrap}>
-            {crew.map((name) => (
-              <View key={name} style={styles.crewCell}>
-                <Button
-                  title={name}
-                  variant={operator === name ? 'primary' : 'secondary'}
-                  onPress={() => setOperator(name)}
-                />
-              </View>
-            ))}
+          <View style={styles.crewPicker}>
+            <Choice
+              layout="wrap"
+              value={crew.includes(operator) ? operator : null}
+              onChange={(v) => setOperator(v ?? '')}
+              accessibilityLabel="Crew shift ini"
+              testID="crew"
+              options={crew.map((name) => ({ value: name, label: name }))}
+            />
           </View>
         )}
         <Input
@@ -119,9 +116,6 @@ export default function ShiftStartScreen() {
 
 const styles = StyleSheet.create({
   shift: { ...type.title, color: colors.text, marginBottom: space.md },
-  row: { flexDirection: 'row', marginHorizontal: -space.xs },
-  cell: { flex: 1, paddingHorizontal: space.xs },
-  crewWrap: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -space.xs, marginBottom: space.sm },
-  crewCell: { paddingHorizontal: space.xs, marginBottom: space.sm },
-  note: { ...type.caption, color: colors.muted, textAlign: 'center', marginTop: space.lg },
+  crewPicker: { marginBottom: space.sm },
+  note: { ...type.body, color: colors.muted, textAlign: 'center', marginTop: space.lg },
 });

@@ -1,10 +1,15 @@
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Card, Chip, Empty, Heading, Loading, Screen, Toast } from '@/components/ui';
-import { STATUS_LABEL, TOUCH_TARGET, colors, radius, space, type } from '@/constants/theme';
+import { StyleSheet, Text, View } from 'react-native';
+import { Choice } from '@/components/Choice';
+import { ICON } from '@/components/icon';
+import {
+  Empty, Heading, ListGroup, ListRow, Loading, Screen, Toast, UnsentMark,
+} from '@/components/ui';
+import { STATUS_LABEL, colors, space, type } from '@/constants/theme';
 import { relative } from '@/lib/format';
 import { EquipmentRow, TaskRow, listEquipment, listTasks } from '@/lib/queue';
+import { sortBySeverity } from '@/lib/severity';
 
 /**
  * Maintenance: the plant's equipment and the tasks open against it (doc 03 §3.5).
@@ -18,13 +23,6 @@ import { EquipmentRow, TaskRow, listEquipment, listTasks } from '@/lib/queue';
  * broken", not "where is P-9101 in the alphabet". Anything not NORMAL sits at
  * the top and carries the reason it is there.
  */
-const SEVERITY: Record<string, number> = {
-  NEED_REPAIR: 0,
-  ON_REPAIR: 1,
-  STANDBY: 2,
-  NORMAL: 3,
-};
-
 type Segment = 'ALAT' | 'TASK';
 
 export default function MaintenanceScreen() {
@@ -39,9 +37,7 @@ export default function MaintenanceScreen() {
     (async () => {
       const [rows, taskRows] = await Promise.all([listEquipment(), listTasks()]);
       if (ignore) return;
-      setEquipment([...rows].sort((a, b) =>
-        (SEVERITY[a.status] ?? 9) - (SEVERITY[b.status] ?? 9)
-        || a.tagNumber.localeCompare(b.tagNumber)));
+      setEquipment(sortBySeverity(rows));
       setTasks(taskRows);
     })();
     return () => { ignore = true; };
@@ -58,20 +54,17 @@ export default function MaintenanceScreen() {
       </Heading>
 
       <View style={styles.segments}>
-        {(['ALAT', 'TASK'] as const).map((value) => (
-          <Pressable
-            key={value}
-            accessibilityRole="button"
-            accessibilityState={{ selected: segment === value }}
-            onPress={() => setSegment(value)}
-            style={[styles.segment, segment === value && styles.segmentOn]}
-          >
-            <Text style={[styles.segmentText, segment === value && styles.segmentTextOn]}>
-              {value === 'ALAT' ? 'Alat' : 'Task'}
-              {value === 'ALAT' && attention > 0 ? ` · ${attention}` : ''}
-            </Text>
-          </Pressable>
-        ))}
+        <Choice
+          layout="segments"
+          value={segment}
+          onChange={(v) => setSegment((v ?? segment) as Segment)}
+          accessibilityLabel="Alat atau task"
+          testID="maintenance-segment"
+          options={[
+            { value: 'ALAT', label: 'Alat', badge: attention > 0 ? ` · ${attention}` : undefined },
+            { value: 'TASK', label: 'Task' },
+          ]}
+        />
       </View>
 
       {segment === 'ALAT'
@@ -86,7 +79,7 @@ function EquipmentList({ rows, attention }: { rows: EquipmentRow[] | null; atten
   if (rows.length === 0) {
     return (
       <Empty
-        icon="🔧"
+        icon={ICON.service}
         title="Belum ada data peralatan"
         hint="Daftar alat datang dari server. Sync sekali saat ada sinyal."
       />
@@ -99,47 +92,40 @@ function EquipmentList({ rows, attention }: { rows: EquipmentRow[] | null; atten
         <Text style={styles.attention}>{attention} alat tidak normal.</Text>
       )}
 
-      {rows.map((item) => (
-        <Card key={item.id} onPress={() => router.push({
-          pathname: '/(tabs)/maintenance/equipment/[id]',
-          params: { id: String(item.id) },
-        })}>
-          <View style={styles.head}>
-            <View style={styles.headText}>
-              {/* Tag in full, never abbreviated (doc 02 §1.1). */}
-              <Text style={styles.tag}>{item.tagNumber}</Text>
-              <Text style={styles.sub}>
-                {[item.name, item.location].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-            <Chip value={item.status} />
-          </View>
-
-          {!!item.statusNote && (
-            <Text style={styles.note} numberOfLines={2}>{item.statusNote}</Text>
-          )}
-
-          {/* Rendered only when there is something to say — an empty Text still
-              takes a line, and a blank strip under every healthy pump makes the
-              list harder to scan. */}
-          {!!(item.statusChangedBy || item.statusChangedAt) && (
-            <Text style={styles.meta}>
-              {[
-                item.statusChangedBy,
-                item.statusChangedAt ? relative(item.statusChangedAt) : '',
-              ].filter(Boolean).join(' · ')}
-            </Text>
-          )}
-
-          {/* The operator's own unsent report, shown as such. Hiding it would
-              look like the app had dropped what they just recorded. */}
-          {item.pendingStatus && (
-            <Text style={styles.unsent}>
-              Belum terkirim · {STATUS_LABEL[item.pendingStatus] ?? item.pendingStatus}
-            </Text>
-          )}
-        </Card>
-      ))}
+      {/* The rail is what makes the worst-first sort readable at arm's length:
+          the top of this list is a block of red before any word resolves. */}
+      <ListGroup>
+        {rows.map((item) => (
+          <ListRow
+            key={item.id}
+            status={item.status}
+            title={item.tagNumber}
+            titleNumeric
+            subtitle={[item.name, item.location].filter(Boolean).join(' · ') || undefined}
+            meta={[
+              item.statusChangedBy,
+              item.statusChangedAt ? relative(item.statusChangedAt) : '',
+            ].filter(Boolean).join(' · ') || undefined}
+            footer={
+              <>
+                {!!item.statusNote && (
+                  <Text style={styles.note} numberOfLines={2}>{item.statusNote}</Text>
+                )}
+                {item.pendingStatus ? (
+                  <UnsentMark
+                    status="PENDING_SYNC"
+                    detail={STATUS_LABEL[item.pendingStatus] ?? item.pendingStatus}
+                  />
+                ) : null}
+              </>
+            }
+            onPress={() => router.push({
+              pathname: '/(tabs)/maintenance/equipment/[id]',
+              params: { id: String(item.id) },
+            })}
+          />
+        ))}
+      </ListGroup>
     </>
   );
 }
@@ -156,7 +142,7 @@ function TaskList({ rows }: { rows: TaskRow[] | null }) {
   if (rows.length === 0) {
     return (
       <Empty
-        icon="🗂️"
+        icon={ICON.emptyTask}
         title="Tidak ada task terbuka"
         hint="Task dibuat admin dan turun ke HP saat sync."
       />
@@ -165,64 +151,33 @@ function TaskList({ rows }: { rows: TaskRow[] | null }) {
 
   return (
     <>
-      {rows.map((task) => (
-        <Card key={task.id} onPress={() => router.push({
-          pathname: '/(tabs)/maintenance/tasks/[id]',
-          params: { id: String(task.id) },
-        })}>
-          <View style={styles.head}>
-            <View style={styles.headText}>
-              <Text style={styles.tag}>{task.title}</Text>
-              <Text style={styles.sub}>
-                {[task.equipmentTag, task.equipmentName].filter(Boolean).join(' · ')}
-              </Text>
-            </View>
-            <Chip value={task.status} />
-          </View>
-
-          {!!task.description && (
-            <Text style={styles.note} numberOfLines={3}>{task.description}</Text>
-          )}
-
-          <Text style={styles.meta}>
-            {[
+      <ListGroup>
+        {rows.map((task) => (
+          <ListRow
+            key={task.id}
+            status={task.status}
+            title={task.title}
+            subtitle={[task.equipmentTag, task.equipmentName].filter(Boolean).join(' · ') || undefined}
+            meta={[
               `${task.progressPct}% selesai`,
               task.dueDate ? `target ${task.dueDate.slice(0, 10)}` : '',
             ].filter(Boolean).join(' · ')}
-          </Text>
-        </Card>
-      ))}
+            footer={!!task.description && (
+              <Text style={styles.note} numberOfLines={3}>{task.description}</Text>
+            )}
+            onPress={() => router.push({
+              pathname: '/(tabs)/maintenance/tasks/[id]',
+              params: { id: String(task.id) },
+            })}
+          />
+        ))}
+      </ListGroup>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  segments: {
-    flexDirection: 'row',
-    gap: space.sm,
-    marginTop: space.md,
-    marginBottom: space.xs,
-  },
-  segment: {
-    flex: 1,
-    minHeight: TOUCH_TARGET,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  segmentOn: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  segmentText: { ...type.bodyStrong, color: colors.muted },
-  segmentTextOn: { color: colors.accent },
-
-  head: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
-  headText: { flex: 1 },
-  tag: { ...type.bodyStrong, color: colors.text },
-  sub: { ...type.caption, color: colors.muted, marginTop: 2 },
-  note: { ...type.body, color: colors.text, marginTop: space.sm },
-  meta: { ...type.caption, color: colors.faint, marginTop: 2 },
-  attention: { ...type.body, color: colors.warn, marginTop: space.md },
-  unsent: { ...type.caption, color: colors.warn, marginTop: space.sm },
+  segments: { marginTop: space.md, marginBottom: space.sm },
+  note: { ...type.body, color: colors.text, marginTop: space.xs },
+  attention: { ...type.bodyStrong, color: colors.warn, marginTop: space.md, marginBottom: space.sm },
 });

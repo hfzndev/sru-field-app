@@ -1,7 +1,10 @@
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Alert, Button, Card, Chip, Empty, Heading, Screen } from '@/components/ui';
+import { ICON } from '@/components/icon';
+import {
+  Alert, Button, Card, Empty, Heading, Loading, Reveal, Screen, StatusBadge,
+} from '@/components/ui';
 import { colors, space, type } from '@/constants/theme';
 import { getMeta } from '@/lib/db';
 import { formatDateTime } from '@/lib/format';
@@ -97,7 +100,7 @@ export default function SyncScreen() {
 
         <Card>
           <View style={styles.badgeRow}>
-            <Chip
+            <StatusBadge
               value={unsent === 0 ? 'SYNCED' : failed > 0 ? 'SYNC_ERROR' : 'PENDING_SYNC'}
               label={unsent === 0 ? 'Semua terkirim' : `${unsent} belum terkirim`}
             />
@@ -122,9 +125,9 @@ export default function SyncScreen() {
         />
 
         <Text style={styles.sectionTitle}>Belum terkirim</Text>
-        {records === null ? null : records.length === 0 ? (
+        {records === null ? <Loading /> : records.length === 0 ? (
           <Empty
-            icon="✅"
+            icon={ICON.emptyDone}
             title="Tidak ada yang tertahan"
             hint="Semua catatan sudah sampai ke server."
           />
@@ -139,7 +142,7 @@ export default function SyncScreen() {
                     <Text style={styles.error}>{record.errorMessage}</Text>
                   )}
                 </View>
-                <Chip value={record.status} label={record.status === 'SYNC_ERROR' ? 'Ditolak' : 'Menunggu'} />
+                <StatusBadge value={record.status} label={record.status === 'SYNC_ERROR' ? 'Ditolak' : 'Menunggu'} />
               </View>
 
               {/* Only rejected records get actions. One still waiting for
@@ -159,7 +162,8 @@ export default function SyncScreen() {
               {/* Confirmed in place rather than in a system dialog: the native
                   alert renders below this app's 16pt floor (doc 03 §1). */}
               {discarding?.clientId === record.clientId && (
-                <View style={styles.confirm}>
+                <Reveal>
+                  <View style={styles.confirm}>
                   <Text style={styles.confirmText}>
                     Hapus catatan ini dari HP? Server tidak pernah menerimanya, jadi HP
                     ini satu-satunya tempat catatan ini ada. Setelah dihapus tidak bisa
@@ -173,7 +177,8 @@ export default function SyncScreen() {
                       <Button title="Ya, hapus" variant="danger" onPress={() => discard(record)} />
                     </View>
                   </View>
-                </View>
+                  </View>
+                </Reveal>
               )}
             </Card>
           ))
@@ -186,11 +191,11 @@ const styles = StyleSheet.create({
   badgeRow: { flexDirection: 'row', marginBottom: space.sm },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: space.sm },
   label: { ...type.bodyStrong, color: colors.text },
-  meta: { ...type.caption, color: colors.muted, marginTop: 2 },
+  meta: { ...type.body, color: colors.muted, marginTop: 2 },
   actions: { flexDirection: 'row', gap: space.sm, marginTop: space.md },
   confirm: { marginTop: space.md },
   confirmText: { ...type.body, color: colors.text, marginBottom: space.sm },
-  warn: { ...type.caption, color: colors.danger, marginTop: space.sm },
-  error: { ...type.caption, color: colors.danger, marginTop: 4 },
+  warn: { ...type.body, color: colors.danger, marginTop: space.sm },
+  error: { ...type.body, color: colors.danger, marginTop: 4 },
   sectionTitle: { ...type.heading, color: colors.text, marginTop: space.lg, marginBottom: space.sm },
 });

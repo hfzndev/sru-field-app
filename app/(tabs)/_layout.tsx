@@ -1,7 +1,9 @@
 import { Link, Tabs } from 'expo-router';
 import * as Network from 'expo-network';
 import { useEffect } from 'react';
-import { ColorValue, Pressable, Text, View } from 'react-native';
+import { ColorValue, Pressable, View } from 'react-native';
+import { ICON, Icon, IconName } from '@/components/icon';
+import { UnsentMark } from '@/components/ui';
 import { TOUCH_TARGET, colors, space, type } from '@/constants/theme';
 import { runSync } from '@/lib/sync';
 import { useUnsent } from '@/lib/status';
@@ -19,8 +21,8 @@ import { useUnsent } from '@/lib/status';
  * A tab is added only once it leads somewhere real. Dead tabs train operators
  * to ignore parts of the bar.
  */
-function TabIcon({ glyph, color }: { glyph: string; color: ColorValue }) {
-  return <Text style={{ fontSize: 22, color }}>{glyph}</Text>;
+function TabIcon({ name, color }: { name: IconName; color: ColorValue }) {
+  return <Icon name={name} size={26} color={String(color)} />;
 }
 
 /**
@@ -43,18 +45,9 @@ function UnsentBadge() {
         accessibilityRole="button"
         accessibilityLabel={`${unsent} catatan belum terkirim — buka Sync`}
         hitSlop={8}
-        style={{
-          minHeight: TOUCH_TARGET,
-          justifyContent: 'center',
-          backgroundColor: colors.warnSoft,
-          paddingHorizontal: space.md,
-          borderRadius: 999,
-          marginRight: space.xs,
-        }}
+        style={{ minHeight: TOUCH_TARGET, justifyContent: 'center', marginRight: space.xs }}
       >
-        <Text style={{ color: colors.warn, fontWeight: '700', fontSize: 15 }}>
-          ⬆ {unsent}
-        </Text>
+        <UnsentMark status="PENDING_SYNC" variant="count" count={unsent} />
       </Pressable>
     </Link>
   );
@@ -82,7 +75,9 @@ export default function TabsLayout() {
         // readable text, and the usual 12pt tab label sits below it. With only
         // three tabs there is room, so the floor holds here too.
         tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, height: 74, paddingTop: 6, paddingBottom: 10 },
-        tabBarLabelStyle: { fontSize: 16, fontWeight: '600' },
+        // 500 rather than 600: RN resolves a numeric weight to a real typeface
+        // only on API >= 28, and 600 silently collapses to regular below that.
+        tabBarLabelStyle: { fontSize: 16, fontWeight: '500' },
         headerStyle: { backgroundColor: colors.surface },
         headerTitleStyle: { ...type.heading, color: colors.text },
         headerRight: () => (
@@ -94,7 +89,7 @@ export default function TabsLayout() {
               hitSlop={8}
               style={{ minWidth: TOUCH_TARGET, minHeight: TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', marginRight: space.sm }}
             >
-                <Text style={{ fontSize: 20 }}>⚙️</Text>
+                <Icon name={ICON.settings} size="md" color={colors.accent} />
               </Pressable>
             </Link>
           </View>
@@ -103,26 +98,26 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Beranda', tabBarIcon: ({ color }) => <TabIcon glyph="🏠" color={color} /> }}
+        options={{ title: 'Beranda', tabBarIcon: ({ color }) => <TabIcon name={ICON.home} color={color} /> }}
       />
       <Tabs.Screen
         name="tanks"
-        options={{ title: 'Tangki', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🛢️" color={color} /> }}
+        options={{ title: 'Tangki', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.tank} color={color} /> }}
       />
       <Tabs.Screen
         name="activities"
-        options={{ title: 'Aktivitas', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="📝" color={color} /> }}
+        options={{ title: 'Aktivitas', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.activity} color={color} /> }}
       />
       <Tabs.Screen
         name="cleaning"
-        options={{ title: 'Bersih', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🧹" color={color} /> }}
+        options={{ title: 'Bersih', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.cleaning} color={color} /> }}
       />
       <Tabs.Screen
         name="maintenance"
         // Short on purpose: at the 16pt label floor with five tabs, anything
         // longer truncates mid-word ("Mainte…", "Perawa…"). Same trade the
         // Bersih tab already makes.
-        options={{ title: 'Servis', headerShown: false, tabBarIcon: ({ color }) => <TabIcon glyph="🔧" color={color} /> }}
+        options={{ title: 'Servis', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.service} color={color} /> }}
       />
       {/* Still a route, no longer a tab — reached from the header badge and
           from Beranda. href: null keeps it navigable while taking it out of

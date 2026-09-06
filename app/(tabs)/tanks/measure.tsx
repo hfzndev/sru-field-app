@@ -1,6 +1,7 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { ICON } from '@/components/icon';
 import {
   Alert, Button, Card, Field, Loading, NumericInput, Screen, StepHeader, Toast,
 } from '@/components/ui';
@@ -108,7 +109,8 @@ export default function MeasureScreen() {
             invite a guess, and a guessed DCS corrupts the deviation average
             that every later suggestion depends on. */}
         <Button
-          title={dcsUnknown ? '✓ DCS tidak terbaca' : 'DCS tidak terbaca'}
+          title="DCS tidak terbaca"
+          icon={dcsUnknown ? ICON.check : undefined}
           variant={dcsUnknown ? 'primary' : 'secondary'}
           onPress={() => { setDcsUnknown(!dcsUnknown); setDcsText(''); }}
         />
@@ -430,18 +432,18 @@ export default function MeasureScreen() {
 }
 
 const styles = StyleSheet.create({
-  cardLabel: { ...type.caption, color: colors.muted },
+  cardLabel: { ...type.body, color: colors.muted },
   bigLabel: { ...type.body, color: colors.muted },
   bigNumber: { ...type.display, color: colors.text, marginVertical: 2 },
   deviation: { ...type.title, color: colors.accent },
-  reasoning: { ...type.caption, color: colors.muted, marginTop: space.xs },
+  reasoning: { ...type.body, color: colors.muted, marginTop: space.xs },
   attempt: { ...type.bodyStrong, color: colors.warn, marginTop: space.sm },
-  muted: { ...type.caption, color: colors.muted },
+  muted: { ...type.body, color: colors.muted },
   emphasis: { ...type.bodyStrong, color: colors.text },
   question: { ...type.heading, color: colors.text, marginTop: space.lg },
   questionSub: { ...type.body, color: colors.muted, marginBottom: space.md },
-  emptyHint: { ...type.caption, color: colors.warn, marginTop: space.md },
-  adjustLabel: { ...type.caption, color: colors.muted, marginTop: space.lg, marginBottom: space.sm },
+  emptyHint: { ...type.body, color: colors.warn, marginTop: space.md },
+  adjustLabel: { ...type.body, color: colors.muted, marginTop: space.lg, marginBottom: space.sm },
   adjustRow: { flexDirection: 'row', marginHorizontal: -space.xs },
   adjustCell: { flex: 1, paddingHorizontal: space.xs },
   divider: { height: 1, backgroundColor: colors.border, marginVertical: space.md },

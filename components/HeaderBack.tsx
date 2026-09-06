@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
-import { Pressable, Text } from 'react-native';
+import { Pressable } from 'react-native';
+import { ICON, Icon } from '@/components/icon';
 import { TOUCH_TARGET, colors, space } from '@/constants/theme';
 
 /**
@@ -23,7 +24,7 @@ export function HeaderBack() {
         opacity: pressed ? 0.6 : 1,
       })}
     >
-      <Text style={{ fontSize: 26, color: colors.accent, lineHeight: 30 }}>‹</Text>
+      <Icon name={ICON.back} size="lg" color={colors.accent} />
     </Pressable>
   );
 }

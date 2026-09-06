@@ -1,10 +1,9 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
+import { Choice, ChoiceTone } from '@/components/Choice';
 import { Alert, Button, Field, Input, Loading, Screen } from '@/components/ui';
-import {
-  BIG_TOUCH_TARGET, STATUS_LABEL, colors, radius, space, type,
-} from '@/constants/theme';
+import { STATUS_LABEL, colors, space, type } from '@/constants/theme';
 import {
   EQUIPMENT_STATUSES, EquipmentRow, EquipmentStatus, enqueueEquipmentStatus, getEquipment,
 } from '@/lib/queue';
@@ -22,6 +21,14 @@ import { Session, getSession } from '@/lib/session';
  * It saves offline like everything else. The operator is standing at the pump,
  * not in the control room where the signal is.
  */
+/** Each option wears the colour of the status it sets. */
+const TONE: Record<EquipmentStatus, ChoiceTone> = {
+  NORMAL: 'ok',
+  STANDBY: 'neutral',
+  ON_REPAIR: 'warn',
+  NEED_REPAIR: 'danger',
+};
+
 const HINTS: Record<EquipmentStatus, string> = {
   NORMAL: 'Beroperasi normal.',
   STANDBY: 'Siap pakai tapi sedang tidak dijalankan.',
@@ -113,29 +120,23 @@ export default function EquipmentStatusScreen() {
         label={`${item.tagNumber} — status baru`}
         hint={`Sekarang: ${STATUS_LABEL[item.status] ?? item.status}`}
       >
-        <View style={styles.options}>
-          {EQUIPMENT_STATUSES.map((value) => {
-            const selected = status === value;
-            const current = item.status === value;
-            return (
-              <Pressable
-                key={value}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => { setStatus(value); setError(''); }}
-                style={[styles.option, selected && styles.optionOn]}
-              >
-                <Text style={[styles.optionLabel, selected && styles.optionLabelOn]}>
-                  {STATUS_LABEL[value] ?? value}
-                  {current ? ' · sekarang' : ''}
-                </Text>
-                <Text style={[styles.optionHint, selected && styles.optionHintOn]}>
-                  {HINTS[value]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <Choice
+          layout="stack"
+          size="big"
+          value={status}
+          onChange={(v) => { if (v) { setStatus(v); setError(''); } }}
+          accessibilityLabel="Status baru"
+          testID="equipment-status"
+          options={EQUIPMENT_STATUSES.map((value) => ({
+            value,
+            label: STATUS_LABEL[value] ?? value,
+            badge: item.status === value ? ' · sekarang' : undefined,
+            hint: HINTS[value],
+            // The option carries the colour of the status it sets, so the
+            // severity of the choice is visible before the word is read.
+            tone: TONE[value],
+          }))}
+        />
       </Field>
 
       <Field
@@ -167,21 +168,5 @@ export default function EquipmentStatusScreen() {
 }
 
 const styles = StyleSheet.create({
-  options: { gap: space.sm },
-  option: {
-    minHeight: BIG_TOUCH_TARGET,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: space.md,
-    paddingVertical: space.sm,
-    justifyContent: 'center',
-  },
-  optionOn: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  optionLabel: { ...type.bodyStrong, color: colors.text },
-  optionLabelOn: { color: colors.accent },
-  optionHint: { ...type.caption, color: colors.muted, marginTop: 2 },
-  optionHintOn: { color: colors.accent },
-  footnote: { ...type.caption, color: colors.muted, marginTop: space.lg },
+  footnote: { ...type.body, color: colors.muted, marginTop: space.lg },
 });
