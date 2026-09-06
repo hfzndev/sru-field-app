@@ -208,6 +208,36 @@ Verify what actually signed a built APK:
 & "$env:ANDROID_HOME\build-tools\37.0.0\apksigner.bat" verify --print-certs app-release.apk
 ```
 
+## Publishing the build
+
+Once the APK is installed on a handset and works, cut a GitHub release. The
+server watches for it and publishes the build to the handsets on its own — there
+is no 67MB browser upload any more.
+
+```powershell
+Copy-Item android\app\build\outputs\apk\release\app-release.apk ..\releases\sru-field-0.4.0.apk
+gh release create v0.4.0 ..\releases\sru-field-0.4.0.apk --title "SRU Field 0.4.0" --notes "..."
+```
+
+Two rules, and both are checked by the server rather than trusted:
+
+- **The tag is `v` + `expo.version`, exactly.** `v0.4.0`, not `0.4.0` and not
+  `v0.4`. The tag is the only version source the server consults.
+- **The asset is named `sru-field-<expo.version>.apk`.** The gradle output is
+  always `app-release.apk`, so the rename is not optional. An asset whose name
+  disagrees with the tag is refused — the server will not store a build under a
+  version it had to guess at.
+
+Drafts and prereleases are ignored, so a draft release is a safe place to write
+release notes before publishing.
+
+**Check Devices in the admin web afterwards.** A release that breaks either rule
+is *ignored*, not rejected loudly: GitHub shows a green 200 delivery and nothing
+appears on the server. The delivery body in the repo's Settings → Webhooks →
+Recent Deliveries says which rule it fell foul of (`ignored: "no_asset"` is a
+name that does not match the tag). The admin upload form still works and is the
+fallback for anything the webhook will not take.
+
 ## Permissions
 
 `app.json` blocks five permissions that native dependencies pull in but this
