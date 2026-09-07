@@ -112,6 +112,16 @@ export type LoginResponse = {
   equipment: EquipmentDto[];
   contractors: ContractorDto[];
   tasks: TaskDto[];
+  /**
+   * Open lembar tugas and what has already been filled in. Sent at login for
+   * the same reason as everything else here: the cursor the phone stores is
+   * this response's dataVersion, so anything missing from it is not late but
+   * permanently missed.
+   */
+  sheets?: SheetDto[];
+  sheetColumns?: SheetColumnDto[];
+  sheetRows?: SheetRowDto[];
+  sheetCells?: SheetCellDto[];
   tankDeviation: Record<string, DeviationDto[]>;
   dataVersion: number;
 };
@@ -309,12 +319,53 @@ export type TaskLogPayload = {
   shiftTime: string;
 };
 
+/**
+ * A row an operator added to a lembar the supervisor had already published.
+ *
+ * No sortOrder: the server decides where "the end" is. A handset offline for
+ * two days has no idea how many rows the lembar grew meanwhile, so any position
+ * it proposed would reorder someone else's work (lib/validation.js).
+ */
+export type SheetRowPayload = {
+  clientId: string;
+  sheetId: number;
+  label: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/**
+ * One filled cell.
+ *
+ * The row is named by `rowId` when the phone pulled it, or by `rowClientId`
+ * when the same offline session invented it. Exactly one is sent; the server
+ * resolves the second form inside the batch, which is why rows are pushed
+ * before cells.
+ */
+export type SheetCellPayload = {
+  clientId: string;
+  sheetId: number;
+  rowId: number | null;
+  rowClientId: string | null;
+  columnId: number;
+  valueText: string;
+  valueNumber: number | null;
+  photoPath?: string;
+  filledAt: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
 export type SyncPayload = {
   readings?: ReadingPayload[];
   activities?: ActivityPayload[];
   cleaning?: CleaningPayload[];
   taskLogs?: TaskLogPayload[];
   equipmentStatus?: EquipmentStatusPayload[];
+  sheetRows?: SheetRowPayload[];
+  sheetCells?: SheetCellPayload[];
 };
 
 export type SyncAck = {
@@ -330,6 +381,12 @@ export type SyncAck = {
   statusChanged?: boolean;
   levelMm?: number;
   deviationMm?: number | null;
+  /**
+   * The server id of the row a cell landed against. Sent so a cell written
+   * against a locally-invented row stops depending on that row's client_id once
+   * the row has a server identity.
+   */
+  rowId?: number;
 };
 
 export type SyncResponse = {
@@ -445,6 +502,64 @@ export type RecentTaskLog = {
   receivedAt: string;
 };
 
+/** A lembar tugas as the server describes it (doc 05 §4). */
+export type SheetDto = {
+  id: number;
+  title: string;
+  description?: string;
+  status: string;
+  dueDate: string | null;
+  assignedShift?: string;
+  allowOperatorRows: boolean;
+  isActive: boolean;
+};
+
+export type SheetColumnDto = {
+  id: number;
+  sheetId: number;
+  label: string;
+  /** LABEL / TEXT / NUMBER / PHOTO / CHECK / CHOICE — free text so VIDEO can be added later. */
+  kind: string;
+  isRequired: boolean;
+  options: string[];
+  /** The supervisor's reference shot, shown beside the shutter. */
+  examplePhoto: string;
+  hint: string;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export type SheetRowDto = {
+  id: number;
+  clientId: string | null;
+  sheetId: number;
+  label: string;
+  sortOrder: number;
+  addedByName: string;
+  isActive: boolean;
+};
+
+/**
+ * The current value of a cell — newest per (row, column), not every write.
+ * Not scoped to this shift: a lembar is shared work, and a shift that could not
+ * see what the previous one filled would walk the whole round again.
+ */
+export type SheetCellDto = {
+  id: number;
+  clientId: string;
+  sheetId: number;
+  rowId: number;
+  columnId: number;
+  valueText: string;
+  valueNumber: number | null;
+  photoPath: string;
+  filledByName: string;
+  shiftGroup: string;
+  shiftTime: string;
+  filledAt: string;
+  receivedAt: string;
+};
+
 export type PullResponse = {
   dataVersion: number;
   master: {
@@ -453,6 +568,9 @@ export type PullResponse = {
     contractors: (ContractorDto & { isActive: boolean })[];
     tasks: TaskDto[];
     crew: { id: number; name: string; sortOrder: number; isActive: boolean }[];
+    sheets?: SheetDto[];
+    sheetColumns?: SheetColumnDto[];
+    sheetRows?: SheetRowDto[];
   };
   recent: {
     readings: RecentReading[];
@@ -460,6 +578,7 @@ export type PullResponse = {
     cleaning: RecentCleaning[];
     taskLogs: RecentTaskLog[];
     equipmentStatus?: RecentEquipmentStatus[];
+    sheetCells?: SheetCellDto[];
   };
   /**
    * Five readings per tank, all shifts, any age — the same set login sends.

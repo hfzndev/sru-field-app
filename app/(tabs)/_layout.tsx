@@ -98,11 +98,11 @@ export default function TabsLayout() {
     >
       <Tabs.Screen
         name="index"
-        options={{ title: 'Beranda', tabBarIcon: ({ color }) => <TabIcon name={ICON.home} color={color} /> }}
+        options={{ title: 'Home', tabBarIcon: ({ color }) => <TabIcon name={ICON.home} color={color} /> }}
       />
       <Tabs.Screen
         name="tanks"
-        options={{ title: 'Tangki', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.tank} color={color} /> }}
+        options={{ title: 'Midband', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.tank} color={color} /> }}
       />
       <Tabs.Screen
         name="activities"
@@ -110,19 +110,23 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="cleaning"
-        options={{ title: 'Bersih', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.cleaning} color={color} /> }}
+        options={{ title: 'GHK', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.cleaning} color={color} /> }}
       />
       <Tabs.Screen
         name="maintenance"
         // Short on purpose: at the 16pt label floor with five tabs, anything
         // longer truncates mid-word ("Mainte…", "Perawa…"). Same trade the
         // Bersih tab already makes.
-        options={{ title: 'Servis', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.service} color={color} /> }}
+        options={{ title: 'Alat', headerShown: false, tabBarIcon: ({ color }) => <TabIcon name={ICON.service} color={color} /> }}
       />
       {/* Still a route, no longer a tab — reached from the header badge and
           from Beranda. href: null keeps it navigable while taking it out of
           the bar. */}
       <Tabs.Screen name="sync" options={{ title: 'Sync', href: null }} />
+      {/* Lembar tugas takes the same treatment, and for the same reason: five
+          tabs is already the ceiling at a 16pt label, and this one is reached
+          from Beranda where its outstanding count can be shown alongside. */}
+      <Tabs.Screen name="sheets" options={{ title: 'Lembar Tugas', href: null }} />
     </Tabs>
   );
 }

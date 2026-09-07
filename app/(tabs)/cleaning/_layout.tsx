@@ -19,7 +19,7 @@ export default function CleaningLayout() {
         headerLeft: ({ canGoBack }) => (canGoBack ? <HeaderBack /> : null),
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Bersih-bersih' }} />
+      <Stack.Screen name="index" options={{ title: 'GHK' }} />
       <Stack.Screen name="new" options={{ title: 'Dokumentasi baru' }} />
       <Stack.Screen name="[id]" options={{ title: 'Sesi bersih-bersih' }} />
     </Stack>

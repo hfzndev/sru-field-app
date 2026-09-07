@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { LoginResponse } from './api';
+import { applySheetCells, applySheetMaster } from './sheets';
 import {
   ensureInstallId, equipmentUpsert, equipmentValues, getDb, getMeta, setMeta,
 } from './db';
@@ -174,6 +175,13 @@ export async function cacheBootstrap(bootstrap: LoginResponse): Promise<void> {
         t.title, t.description ?? '', t.status, t.progressPct, t.dueDate ?? null,
       );
     }
+
+    // Lembar tugas, through the same writer the delta pull uses. Note there is
+    // no DELETE here, unlike the tables above: task_sheet_rows is a field table
+    // and can hold a row this operator created that the server has not seen
+    // yet, along with the cells hanging off it.
+    await applySheetMaster(txn, bootstrap);
+    await applySheetCells(txn, bootstrap.sheetCells ?? []);
 
     // The deviation cache is what makes the tape suggestion work offline
     // (doc 04 §4). Without it the suggestion silently degrades to raw DCS.

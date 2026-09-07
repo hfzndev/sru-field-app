@@ -78,9 +78,9 @@ export default function SummaryScreen() {
 
       <Card>
         <View style={styles.stats}>
-          <Stat value={data.readings} label="Pengukuran" />
+          <Stat value={data.readings} label="Midband" />
           <Stat value={data.activities} label="Aktivitas" />
-          <Stat value={data.cleaning} label="Bersih-bersih" />
+          <Stat value={data.cleaning} label="GHK" />
         </View>
 
         {/* Second row rather than five across: at the 16pt floor five columns
@@ -96,7 +96,7 @@ export default function SummaryScreen() {
             here rather than left for someone to notice. */}
         {data.unfinishedCleaning > 0 && (
           <Text style={styles.warn}>
-            {data.unfinishedCleaning} sesi bersih-bersih belum selesai — foto sesudah belum diambil.
+            {data.unfinishedCleaning} sesi Good House Keeping belum selesai — foto sesudah belum diambil.
           </Text>
         )}
         {unsent > 0 && (
@@ -106,13 +106,13 @@ export default function SummaryScreen() {
         )}
       </Card>
 
-      <Text style={styles.sectionTitle}>Urutan kejadian</Text>
+      <Text style={styles.sectionTitle}>History</Text>
 
       {data.entries.length === 0 ? (
         <Empty
           icon={ICON.clock}
           title="Belum ada catatan shift ini"
-          hint="Pengukuran, aktivitas, bersih-bersih, status alat dan progres task akan muncul di sini."
+          hint="Seluruh aktivitas shift akan muncul di sini."
         />
       ) : (
         data.entries.map((entry) => (
@@ -132,9 +132,6 @@ export default function SummaryScreen() {
         ))
       )}
 
-      <Text style={styles.footer}>
-        Rangkuman 12 jam terakhir untuk shift ini, dari semua HP yang dipakai shift ini.
-      </Text>
     </Screen>
   );
 }

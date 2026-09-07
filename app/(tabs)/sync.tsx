@@ -72,7 +72,7 @@ export default function SyncScreen() {
 
   return (
     <Screen>
-        <Heading sub="Aman dipencet berkali-kali — data tidak akan terkirim dua kali.">
+        <Heading sub="Sinkronisasi data dengan server">
           Sinkronisasi
         </Heading>
 
@@ -117,7 +117,7 @@ export default function SyncScreen() {
         </Card>
 
         <Button
-          title={busy ? 'Mengirim…' : 'Sync Sekarang'}
+          title={busy ? 'Mengirim…' : 'Sync Now'}
           variant="primary"
           size="big"
           busy={busy}

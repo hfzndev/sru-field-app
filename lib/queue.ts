@@ -2,7 +2,8 @@ import * as Crypto from 'expo-crypto';
 import { STATUS_LABEL } from '@/constants/theme';
 import { isoDaysAgo } from './format';
 import {
-  ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload, TaskLogPayload,
+  ActivityPayload, CleaningPayload, EquipmentStatusPayload, ReadingPayload,
+  SheetCellPayload, SheetRowPayload, TaskLogPayload,
 } from './api';
 import { FIELD_TABLES, FieldTable, getDb } from './db';
 import { deletePhoto, sweepOrphanPhotos } from './photos';
@@ -117,6 +118,10 @@ export const PHOTO_COLUMNS: {
   { table: 'cleaning_sessions', local: 'before_photo_local_uri', remote: 'before_photo', required: true },
   { table: 'cleaning_sessions', local: 'after_photo_local_uri', remote: 'after_photo', required: true },
   { table: 'maintenance_task_logs', local: 'photo_local_uri', remote: 'photo_path', required: false },
+  // A photo column on a lembar tugas. Not required: the supervisor decides
+  // whether the column is mandatory, and a lost file must not strand the rest
+  // of a row the operator walked out to fill.
+  { table: 'task_sheet_cells', local: 'photo_local_uri', remote: 'photo_path', required: false },
 ];
 
 export type PendingPhoto = {
@@ -1158,6 +1163,15 @@ export async function runRetention(): Promise<number> {
       ? " AND status != 'IN_PROGRESS'"
       : '';
 
+    // A lembar the supervisor has not closed is unfinished work, the same as an
+    // IN_PROGRESS cleaning session. Purging its rows and cells at seven days
+    // would empty the screen of a round still being walked — and for a handset
+    // that has been out of signal that long, there is no pull coming to refill
+    // it. Once the lembar is closed or deleted the normal window applies.
+    const keepOpenSheets = table === 'task_sheet_rows' || table === 'task_sheet_cells'
+      ? ` AND sheet_id NOT IN (SELECT id FROM task_sheets WHERE is_active = 1 AND status = 'OPEN')`
+      : '';
+
     // The cutoff is ISO because created_at is ISO. It used to compare against
     // datetime('now','-7 days'), whose space separator sorts below ISO's 'T',
     // so every row dated on the cutoff day looked newer than the cutoff and
@@ -1165,7 +1179,7 @@ export async function runRetention(): Promise<number> {
     // accident rather than design.
     const expiring = `sync_status = 'SYNCED'
           AND created_at < ?
-          ${keepUnfinishedCleaning}`;
+          ${keepUnfinishedCleaning}${keepOpenSheets}`;
 
     // The photos of rows about to go are collected first and deleted with them
     // (doc 07 §5 purges "record + foto"). Leaving them to the orphan sweep
@@ -1192,4 +1206,139 @@ export async function runRetention(): Promise<number> {
   sweepOrphanPhotos(await referencedPhotoUris());
 
   return removed;
+}
+
+/* --------------------------------------------------------- lembar tugas
+
+   Rows and cells an operator writes against a lembar the supervisor published
+   (doc 05 §4). Both are ordinary queued records — client_id, sync_status — but
+   they carry one extra rule between them: a cell may name its row by client_id,
+   so rows must be pushed before cells (lib/sync.ts).                          */
+
+export type QueuedSheetRow = {
+  sheetId: number;
+  label: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/**
+ * Adds a row the supervisor did not define — an operator standing in front of a
+ * pump nobody put on the list.
+ *
+ * `sort_order` is guessed locally as "after everything I can see", and the
+ * server overwrites it on acceptance. It only decides where the row sits on
+ * this screen until then; proposing a real position would be a guess about a
+ * lembar that may have grown while this handset was offline.
+ */
+export async function enqueueSheetRow(row: QueuedSheetRow): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+
+  const last = await db.getFirstAsync<{ last: number }>(
+    'SELECT COALESCE(MAX(sort_order), -1) AS last FROM task_sheet_rows WHERE sheet_id = ?',
+    row.sheetId,
+  );
+
+  await db.runAsync(
+    `INSERT INTO task_sheet_rows
+       (client_id, sheet_id, label, sort_order, added_by_name, is_active,
+        operator_name, shift_group, shift_time, sync_status, created_at)
+     VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 'PENDING_SYNC', ?)`,
+    clientId, row.sheetId, row.label, (last?.last ?? -1) + 1, row.operatorName,
+    row.operatorName, row.shiftGroup, row.shiftTime, new Date().toISOString(),
+  );
+
+  await refreshUnsent();
+  return clientId;
+}
+
+export type QueuedSheetCell = {
+  sheetId: number;
+  rowClientId: string;
+  columnId: number;
+  valueText?: string;
+  valueNumber?: number | null;
+  photoLocalUri?: string;
+  operatorName: string;
+  shiftGroup: string;
+  shiftTime: string;
+};
+
+/**
+ * Fills one cell.
+ *
+ * Always an insert, never an update — the append-only rule (doc 07 §4). An
+ * operator correcting a value writes a second cell and the later `filled_at`
+ * wins, which is the same thing the server does with two handsets that filled
+ * the same cell offline. The earlier value stays as evidence of what was seen.
+ */
+export async function enqueueSheetCell(cell: QueuedSheetCell): Promise<string> {
+  const db = await getDb();
+  const clientId = Crypto.randomUUID();
+  const now = new Date().toISOString();
+
+  await db.runAsync(
+    `INSERT INTO task_sheet_cells
+       (client_id, sheet_id, row_client_id, column_id, value_text, value_number,
+        photo_local_uri, filled_by_name, operator_name, shift_group, shift_time,
+        filled_at, sync_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_SYNC', ?)`,
+    clientId, cell.sheetId, cell.rowClientId, cell.columnId, cell.valueText ?? '',
+    cell.valueNumber ?? null, cell.photoLocalUri ?? '', cell.operatorName,
+    cell.operatorName, cell.shiftGroup, cell.shiftTime, now, now,
+  );
+
+  await refreshUnsent();
+  return clientId;
+}
+
+export async function pendingSheetRows(): Promise<SheetRowPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT * FROM task_sheet_rows WHERE sync_status = 'PENDING_SYNC' ORDER BY created_at`,
+  );
+
+  return rows.map((r: any) => ({
+    clientId: r.client_id,
+    sheetId: r.sheet_id,
+    label: r.label,
+    operatorName: r.operator_name,
+    shiftGroup: r.shift_group,
+    shiftTime: r.shift_time,
+  }));
+}
+
+/**
+ * Cells waiting to go, each addressed by whichever row identity exists.
+ *
+ * `rowId` when the row has a server id, `rowClientId` when it does not — the
+ * second form is only resolvable because rows are pushed first in the same
+ * batch (lib/sync.js processSync).
+ */
+export async function pendingSheetCells(): Promise<SheetCellPayload[]> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<any>(
+    `SELECT c.*, r.server_id AS row_server_id
+       FROM task_sheet_cells c
+       JOIN task_sheet_rows r ON r.client_id = c.row_client_id
+      WHERE c.sync_status = 'PENDING_SYNC'
+      ORDER BY c.created_at`,
+  );
+
+  return rows.map((c: any) => ({
+    clientId: c.client_id,
+    sheetId: c.sheet_id,
+    rowId: c.row_server_id ?? null,
+    rowClientId: c.row_server_id ? null : c.row_client_id,
+    columnId: c.column_id,
+    valueText: c.value_text ?? '',
+    valueNumber: c.value_number ?? null,
+    ...(c.photo_path ? { photoPath: c.photo_path } : {}),
+    filledAt: c.filled_at,
+    operatorName: c.operator_name,
+    shiftGroup: c.shift_group,
+    shiftTime: c.shift_time,
+  }));
 }

@@ -20,7 +20,7 @@ export default function MaintenanceLayout() {
         headerLeft: ({ canGoBack }) => (canGoBack ? <HeaderBack /> : null),
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Servis' }} />
+      <Stack.Screen name="index" options={{ title: 'Alat' }} />
       <Stack.Screen name="equipment/[id]" options={{ title: 'Detail alat' }} />
       <Stack.Screen name="equipment/status" options={{ title: 'Ubah status' }} />
       <Stack.Screen name="tasks/[id]" options={{ title: 'Progres task' }} />

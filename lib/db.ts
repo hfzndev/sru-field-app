@@ -245,6 +245,90 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       ALTER TABLE maintenance_task_logs ADD COLUMN photo_lost INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // Phase 5: lembar tugas — tables a supervisor designs in the admin web and
+    // an operator fills here, offline (doc 05 §4).
+    version: 4,
+    sql: `
+      -- Design, pulled and read-only on the phone.
+      CREATE TABLE IF NOT EXISTS task_sheets (
+        id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'OPEN',
+        due_date TEXT,
+        assigned_shift TEXT NOT NULL DEFAULT '',
+        allow_operator_rows INTEGER NOT NULL DEFAULT 1,
+        is_active INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE IF NOT EXISTS task_sheet_columns (
+        id INTEGER PRIMARY KEY,
+        sheet_id INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'TEXT',
+        is_required INTEGER NOT NULL DEFAULT 1,
+        options TEXT NOT NULL DEFAULT '[]',   -- JSON array, as the server stores it
+        example_photo TEXT NOT NULL DEFAULT '',
+        hint TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE INDEX IF NOT EXISTS idx_sheetcols_sheet ON task_sheet_columns(sheet_id, sort_order);
+
+      -- Rows are keyed by client_id, not by server id, because an operator can
+      -- create one in the field where no server id exists yet. The server mints
+      -- a client_id for its own rows too, so the phone addresses every row the
+      -- same way and never has to branch on where the row came from.
+      CREATE TABLE IF NOT EXISTS task_sheet_rows (
+        client_id TEXT PRIMARY KEY NOT NULL,
+        sheet_id INTEGER NOT NULL,
+        label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        added_by_name TEXT NOT NULL DEFAULT '',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        operator_name TEXT NOT NULL DEFAULT '',
+        shift_group TEXT NOT NULL DEFAULT '',
+        shift_time TEXT NOT NULL DEFAULT '',
+        sync_status TEXT NOT NULL DEFAULT 'PENDING_SYNC',
+        server_id INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sheetrows_status ON task_sheet_rows(sync_status);
+      CREATE INDEX IF NOT EXISTS idx_sheetrows_sheet ON task_sheet_rows(sheet_id, sort_order);
+
+      -- Append-only, mirroring the server (doc 07 §4): filling a cell twice
+      -- writes two rows and the later filled_at is the value that counts. That
+      -- is what makes two operators on one lembar a non-event rather than a
+      -- conflict nobody can resolve out in the plant.
+      CREATE TABLE IF NOT EXISTS task_sheet_cells (
+        client_id TEXT PRIMARY KEY NOT NULL,
+        sheet_id INTEGER NOT NULL,
+        row_client_id TEXT NOT NULL,
+        column_id INTEGER NOT NULL,
+        value_text TEXT NOT NULL DEFAULT '',
+        value_number REAL,
+        photo_local_uri TEXT NOT NULL DEFAULT '',
+        photo_path TEXT NOT NULL DEFAULT '',
+        photo_lost INTEGER NOT NULL DEFAULT 0,
+        filled_by_name TEXT NOT NULL DEFAULT '',
+        operator_name TEXT NOT NULL DEFAULT '',
+        shift_group TEXT NOT NULL DEFAULT '',
+        shift_time TEXT NOT NULL DEFAULT '',
+        filled_at TEXT NOT NULL,
+        sync_status TEXT NOT NULL DEFAULT 'PENDING_SYNC',
+        server_id INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sheetcells_status ON task_sheet_cells(sync_status);
+      CREATE INDEX IF NOT EXISTS idx_sheetcells_current
+        ON task_sheet_cells(sheet_id, row_client_id, column_id, filled_at DESC);
+    `,
+  },
 ];
 
 /**
@@ -300,9 +384,16 @@ export const FIELD_TABLES = [
   'cleaning_sessions',
   'maintenance_task_logs',
   'equipment_status_logs',
+  // Rows before cells, here as on the server: a cell may name its row by
+  // client_id, and that only resolves once the row has been accepted
+  // (lib/sync.js processSync).
+  'task_sheet_rows',
+  'task_sheet_cells',
 ] as const;
 
-export const MASTER_TABLES = ['tanks', 'equipment', 'contractors', 'crew', 'tasks'] as const;
+export const MASTER_TABLES = [
+  'tanks', 'equipment', 'contractors', 'crew', 'tasks', 'task_sheets', 'task_sheet_columns',
+] as const;
 
 export type FieldTable = (typeof FIELD_TABLES)[number];
 

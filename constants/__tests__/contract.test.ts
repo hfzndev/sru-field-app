@@ -23,7 +23,14 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** The route tree as shipped in v0.3.0 (doc 03 §5). */
+/**
+ * The route tree as shipped in v0.3.0 (doc 03 §5), plus the lembar tugas
+ * screens added afterwards (doc 05 §4).
+ *
+ * This list grows only when a feature genuinely adds a destination. Its job is
+ * to make a rename or a quiet deletion fail here rather than in generated
+ * types, so an addition should be an explicit line — never a loosened matcher.
+ */
 const ROUTES = [
   'app/(tabs)/_layout.tsx',
   'app/(tabs)/activities/_layout.tsx',
@@ -39,6 +46,11 @@ const ROUTES = [
   'app/(tabs)/maintenance/equipment/status.tsx',
   'app/(tabs)/maintenance/index.tsx',
   'app/(tabs)/maintenance/tasks/[id].tsx',
+  'app/(tabs)/sheets/[id].tsx',
+  'app/(tabs)/sheets/_layout.tsx',
+  'app/(tabs)/sheets/add-row.tsx',
+  'app/(tabs)/sheets/index.tsx',
+  'app/(tabs)/sheets/row/[clientId].tsx',
   'app/(tabs)/sync.tsx',
   'app/(tabs)/tanks/[id].tsx',
   'app/(tabs)/tanks/_layout.tsx',

@@ -50,7 +50,7 @@ export default function MaintenanceScreen() {
       <Toast message={toast} onDone={() => setToast(null)} />
 
       <Heading sub="Status alat dan pekerjaan yang sedang berjalan.">
-        Servis
+        Status Peralatan
       </Heading>
 
       <View style={styles.segments}>

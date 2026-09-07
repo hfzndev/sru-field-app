@@ -18,7 +18,7 @@ export default function TanksLayout() {
         headerLeft: ({ canGoBack }) => (canGoBack ? <HeaderBack /> : null),
       }}
     >
-      <Stack.Screen name="index" options={{ title: 'Tangki' }} />
+      <Stack.Screen name="index" options={{ title: 'Midband' }} />
       <Stack.Screen name="[id]" options={{ title: 'Riwayat' }} />
       <Stack.Screen name="measure" options={{ title: 'Ukur tangki' }} />
     </Stack>

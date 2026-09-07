@@ -1,11 +1,15 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { Button, Card, Heading, Loading, Screen, StatusBadge } from '@/components/ui';
+import { Button, Card, Heading, Loading, ProgressBar, Screen, StatusBadge } from '@/components/ui';
 import { SHIFT_TIME_LABEL, colors, space, type } from '@/constants/theme';
 import { isoStartOfWibToday } from '@/lib/format';
 import { getDb, unsentCount } from '@/lib/db';
 import { Session, getSession } from '@/lib/session';
+import {
+  SheetProgress, SheetRecord, completionText, currentCells, listColumns, listRows, listSheets,
+  progressOf,
+} from '@/lib/sheets';
 import { refreshUpdateStatus, useUpdateStatus } from '@/lib/update';
 
 /**
@@ -18,7 +22,33 @@ import { refreshUpdateStatus, useUpdateStatus } from '@/lib/update';
  * Everything is read from local storage, so this screen renders identically
  * with or without signal.
  */
-type Summary = { session: Session | null; unsent: number; readingsToday: number };
+type SheetEntry = { sheet: SheetRecord; progress: SheetProgress };
+type Summary = {
+  session: Session | null;
+  unsent: number;
+  readingsToday: number;
+  sheets: SheetEntry[];
+};
+
+/**
+ * Open lembar tugas with their counts.
+ *
+ * On Beranda rather than in the tab bar: five tabs is already the ceiling at
+ * the 16pt label floor (see the tabs layout), and a lembar is work handed down
+ * for today rather than a permanent part of the app — it belongs where an
+ * operator lands, next to the other numbers about today.
+ */
+async function loadSheetEntries(): Promise<SheetEntry[]> {
+  const sheets = await listSheets();
+  const entries: SheetEntry[] = [];
+  for (const sheet of sheets) {
+    const [columns, rows, cells] = await Promise.all([
+      listColumns(sheet.id), listRows(sheet.id), currentCells(sheet.id),
+    ]);
+    entries.push({ sheet, progress: progressOf(columns, rows, cells) });
+  }
+  return entries;
+}
 
 export default function DashboardScreen() {
   const [data, setData] = useState<Summary | null>(null);
@@ -42,7 +72,8 @@ export default function DashboardScreen() {
           'SELECT COUNT(*) AS n FROM tank_readings WHERE reading_at >= ?',
           isoStartOfWibToday(),
         );
-        if (!ignore) setData({ session, unsent, readingsToday: row?.n ?? 0 });
+        const sheets = await loadSheetEntries();
+        if (!ignore) setData({ session, unsent, readingsToday: row?.n ?? 0, sheets });
 
         // Fired after the local reads, never awaited before them: this screen
         // must draw from SQLite alone with no signal, and a 10s HEAD request
@@ -57,7 +88,7 @@ export default function DashboardScreen() {
 
   if (!data) return <Screen><Loading /></Screen>;
 
-  const { session, unsent, readingsToday } = data;
+  const { session, unsent, readingsToday, sheets } = data;
   const subtitle = session
     ? [session.shiftName, SHIFT_TIME_LABEL[session.shiftTime] ?? session.shiftTime, session.operatorName]
       .filter(Boolean).join(' · ')
@@ -65,7 +96,7 @@ export default function DashboardScreen() {
 
   return (
     <Screen>
-      <Heading sub={subtitle}>Beranda</Heading>
+      <Heading sub={subtitle}>SRU Field App</Heading>
 
       {/* The outdated-version warning (doc 09 §3 lapis 3).
           It lives here as well as in Pengaturan because nobody opens
@@ -103,7 +134,7 @@ export default function DashboardScreen() {
         <View style={styles.statRow}>
           <View style={styles.stat}>
             <Text style={styles.statNumber}>{readingsToday}</Text>
-            <Text style={styles.statLabel}>Pengukuran</Text>
+            <Text style={styles.statLabel}>Midband</Text>
           </View>
           <View style={styles.stat}>
             <Text style={styles.statNumber}>{unsent}</Text>
@@ -112,8 +143,30 @@ export default function DashboardScreen() {
         </View>
       </Card>
 
+      {sheets.length > 0 && (
+        <>
+          <Text style={styles.sectionTitle}>Tugas</Text>
+          {sheets.map(({ sheet, progress }) => (
+            <Card
+              key={sheet.id}
+              onPress={() => router.push({
+                pathname: '/(tabs)/sheets/[id]',
+                params: { id: String(sheet.id) },
+              })}
+            >
+              <Text style={styles.sheetTitle}>{sheet.title}</Text>
+              <ProgressBar
+                done={progress.rowsDone}
+                total={progress.rows}
+                label={completionText(progress)}
+              />
+            </Card>
+          ))}
+        </>
+      )}
+
       <Button
-        title="+ Ukur tangki"
+        title="Midband Calc"
         variant="primary"
         size="big"
         onPress={() => router.push('/(tabs)/tanks')}
@@ -123,7 +176,7 @@ export default function DashboardScreen() {
           case where something is queued; this covers the other one — pulling
           master changes down when nothing is waiting to go up. */}
       <Button
-        title="Sync sekarang"
+        title="Sync"
         variant="secondary"
         onPress={() => router.push('/(tabs)/sync')}
       />
@@ -131,7 +184,7 @@ export default function DashboardScreen() {
       {/* The handover document (doc 02 §4). Kept on the dashboard because that
           is where an operator lands when the shift is ending. */}
       <Button
-        title="Rangkuman shift"
+        title="Summary"
         variant="secondary"
         onPress={() => router.push('/summary')}
       />
@@ -148,6 +201,7 @@ const styles = StyleSheet.create({
   updateTitle: { ...type.bodyStrong, color: colors.warn, marginBottom: space.xs },
   updateBody: { ...type.body, color: colors.text },
   hint: { ...type.body, color: colors.muted },
+  sheetTitle: { ...type.bodyStrong, color: colors.text },
   sectionTitle: { ...type.heading, color: colors.text, marginBottom: space.sm, marginTop: space.sm },
   statRow: { flexDirection: 'row' },
   stat: { flex: 1 },

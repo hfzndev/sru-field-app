@@ -470,6 +470,53 @@ export function StepHeader({ step, total, title }: { step: number; total: number
 }
 
 /**
+ * How far through a list of work the operator is.
+ *
+ * The sentence carries the meaning and the bar only supports it — "7 dari 12
+ * baris selesai" is what an operator is actually counting, and a bare
+ * percentage on a lembar tugas would have to be translated back into rows every
+ * time. The bar is 10pt, well under the 16pt text floor, because it is not text
+ * and is never the only thing saying this.
+ *
+ * `done` reaching `total` is the completion moment: the bar goes to the OK
+ * colour rather than the accent, which is the whole reward. There is no badge
+ * and no score — see the note at the top of constants/theme.ts on why this app
+ * does not decorate.
+ */
+export function ProgressBar({ done, total, label }: {
+  done: number;
+  total: number;
+  label: string;
+}) {
+  const complete = total > 0 && done >= total;
+  const fraction = total > 0 ? Math.min(1, done / total) : 0;
+
+  return (
+    <View style={{ marginTop: space.sm }}>
+      <Text
+        style={[styles.progressLabel, complete && styles.progressLabelDone]}
+        accessibilityRole="text"
+      >
+        {label}
+      </Text>
+      <View
+        style={styles.progressTrack}
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: total, now: done }}
+      >
+        <View
+          style={[
+            styles.progressFill,
+            { width: `${fraction * 100}%` },
+            complete && styles.progressFillDone,
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+/**
  * Shown whenever the device has no connection (doc 03 §1). Deliberately
  * reassuring: offline is the expected state in the plant, not a fault.
  */
@@ -484,6 +531,16 @@ export function OfflineBanner({ visible }: { visible: boolean }) {
 }
 
 const styles = StyleSheet.create({
+  progressLabel: { ...type.body, color: colors.muted, marginBottom: space.xs },
+  progressLabelDone: { ...type.bodyStrong, color: colors.ok },
+  progressTrack: {
+    height: 10,
+    borderRadius: radius.pill,
+    backgroundColor: colors.surfaceAlt,
+    overflow: 'hidden',
+  },
+  progressFill: { height: '100%', borderRadius: radius.pill, backgroundColor: colors.accent },
+  progressFillDone: { backgroundColor: colors.ok },
   screen: { flex: 1, backgroundColor: colors.bg },
   screenInner: { padding: space.lg, flex: 1 },
   scrollPad: { paddingBottom: space.xxl },

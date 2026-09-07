@@ -3,9 +3,10 @@ import { ApiError, OfflineError, pull as apiPull, sync as apiSync, uploadPhoto }
 import { equipmentUpsert, equipmentValues, getDb, getMetaNumber, setMeta } from './db';
 import {
   markError, markPhotoLost, markPhotoUploaded, markSynced, pendingActivities,
-  pendingCleaning, pendingEquipmentStatus, pendingTaskLogs,
-  pendingPhotos, pendingReadings, runRetention,
+  pendingCleaning, pendingEquipmentStatus, pendingSheetCells, pendingSheetRows,
+  pendingTaskLogs, pendingPhotos, pendingReadings, runRetention,
 } from './queue';
+import { applySheetCells, applySheetMaster } from './sheets';
 import { refreshUnsent } from './status';
 import { getToken } from './session';
 
@@ -140,16 +141,21 @@ async function execute(): Promise<SyncOutcome> {
   // No photo on a status change, so nothing can hold one back.
   const equipmentStatus = await pendingEquipmentStatus();
   const taskLogs = (await pendingTaskLogs()).filter((l) => !blocked.has(l.clientId));
+  // Rows carry no photo. Cells can, so a cell whose photo has not uploaded yet
+  // waits, exactly like a reading.
+  const sheetRows = await pendingSheetRows();
+  const sheetCells = (await pendingSheetCells()).filter((c) => !blocked.has(c.clientId));
 
   let pushed = 0;
   let duplicates = 0;
   let rejected = 0;
 
   if (readings.length > 0 || activities.length > 0 || cleaning.length > 0
-      || equipmentStatus.length > 0 || taskLogs.length > 0) {
+      || equipmentStatus.length > 0 || taskLogs.length > 0
+      || sheetRows.length > 0 || sheetCells.length > 0) {
     try {
       const response = await apiSync(token, {
-        readings, activities, cleaning, equipmentStatus, taskLogs,
+        readings, activities, cleaning, equipmentStatus, taskLogs, sheetRows, sheetCells,
       });
 
       // Acks are applied one at a time. If the app dies partway through, the
@@ -296,6 +302,10 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
       rows += 1;
     }
 
+    // The lembar design, shared with the login bootstrap so the two cannot
+    // drift (lib/sheets.ts applySheetMaster).
+    rows += await applySheetMaster(txn, master);
+
     for (const task of master.tasks ?? []) {
       await txn.runAsync(
         `INSERT INTO tasks (id, equipment_id, equipment_tag, equipment_name, title, description, status, progress_pct, due_date)
@@ -402,6 +412,11 @@ async function applyPull(response: Awaited<ReturnType<typeof apiPull>>): Promise
       );
       rows += 1;
     }
+
+    // Cell values from every shift, not just this one: a lembar is shared work
+    // and a handset that could not see what the previous shift filled would
+    // send its operator round the same equipment again.
+    rows += await applySheetCells(txn, recent.sheetCells ?? []);
 
     // The deviation cache comes from the server's own per-tank selection, the
     // same one login sends — 5 readings per tank, every shift, any age.

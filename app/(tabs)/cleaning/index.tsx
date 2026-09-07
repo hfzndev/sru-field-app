@@ -37,8 +37,8 @@ export default function CleaningScreen() {
     <Screen>
       <Toast message={toast} onDone={() => setToast(null)} />
 
-      <Heading sub="Foto sebelum, bersihkan, foto sesudah dari sudut yang sama.">
-        Bersih-bersih
+      <Heading sub="Foto before dan after cleaning dari sudut yang sama.">
+        Good House Keeping
       </Heading>
 
       <Button
